@@ -1,59 +1,60 @@
 //! Cache data structure
 
 use crate::error::CacheResult;
+use crate::CacheError;
 
-use std::alloc::{alloc, alloc_zeroed, dealloc, Layout};
 use std::any::{Any, TypeId};
-use std::cell::UnsafeCell;
-use std::mem::{size_of, transmute, MaybeUninit};
-use std::ptr;
+use std::mem::{transmute, MaybeUninit};
 
 /// A cache data structure.
 /// - G: the number of cache groups
 /// - L: the number of cache lines in each group
-/// - B: the size of each cache line block in bytes
 #[derive(Debug)]
-pub struct Cache<const G: usize, const L: usize, const B: usize> {
-    groups: [CacheGroup<L, B>; G],
+pub struct Cache<const G: usize, const L: usize> {
+    groups: [CacheGroup<L>; G],
 }
 
-impl<const G: usize, const L: usize, const B: usize> Default for Cache<G, L, B> {
+impl<const G: usize, const L: usize> Default for Cache<G, L> {
     fn default() -> Self {
-        #[cfg(debug_assertions)]
-        {
-            assert!(G > 0, "Invalid number of cache groups {}.", G);
-            assert!(L > 0, "Invalid number of cache lines {}.", L);
-        }
+        debug_assert!(G > 0, "Invalid number of cache groups {}.", G);
+        debug_assert!(L > 0, "Invalid number of cache lines {}.", L);
         unsafe { MaybeUninit::zeroed().assume_init() }
     }
 }
 
-impl<const G: usize, const L: usize, const B: usize> Cache<G, L, B> {
+impl<const G: usize, const L: usize> Cache<G, L> {
     /// load a Cacheable into memory
     pub fn load<T: Cacheable>(&mut self) {
         T::load_to(self);
     }
 
-    /// Get a Cacheable from the cache.
-    pub fn get<T: Cacheable>(&self) -> CacheResult<&T> {
-        todo!()
+    /// Retrieve a Cacheable from the cache.
+    pub fn retrieve<T: Cacheable>(&self) -> CacheResult<&T> {
+        T::retrieve_from(self)
     }
 }
 
 #[derive(Debug)]
-struct CacheGroup<const L: usize, const B: usize> {
-    lines: [CacheLine<B>; L],
+struct CacheGroup<const L: usize> {
+    lines: [CacheLine; L],
 }
 
-impl<const L: usize, const B: usize> CacheGroup<L, B> {
+impl<const L: usize> Default for CacheGroup<L> {
+    fn default() -> Self {
+        debug_assert!(L > 0, "Invalid number of cache lines {}.", L);
+        unsafe { MaybeUninit::zeroed().assume_init() }
+    }
+}
+
+impl<const L: usize> CacheGroup<L> {
     /// load Cacheable as CacheLine into the cache.
-    fn load<T>(&mut self, value: T, type_id: usize) {
+    fn load<T: Cacheable>(&mut self, type_id: usize) {
         let mut slug = (None, None, None);
         for (i, line) in self.lines.iter().enumerate() {
             if line.type_id == type_id {
                 slug.0 = Some(i); // hit
                 continue;
-            } else if slug.1.is_none() && line.ptr.is_null() {
+            } else if slug.1.is_none() && line.inner.is_none() {
                 slug.1 = Some(i); // empty
                 continue;
             } else if slug.1.is_none() && line.lru as usize == L - 1 {
@@ -69,50 +70,41 @@ impl<const L: usize, const B: usize> CacheGroup<L, B> {
                     .filter(|l| l.lru < lru)
                     .for_each(|l| l.lru += 1);
                 self.lines[i].lru = 0;
-                unsafe {
-                    (self.lines[i].ptr as *mut T).write(value);
-                }
+                self.lines[i].inner = Some(Box::new(T::load_or_default()));
             }
-            // empty
-            (_, Some(i), None) => {
+            // empty | expired
+            (_, Some(i), None) | (_, _, Some(i)) => {
                 self.lines.iter_mut().for_each(|l| l.lru += 1);
                 self.lines[i].lru = 0;
-                unsafe {
-                    self.lines[i].ptr = alloc(Layout::from_size_align_unchecked(B, 8));
-                    (self.lines[i].ptr as *mut T).write(value);
-                }
-                self.lines[i].type_id = type_id;
-            }
-            // expired
-            (_, _, Some(i)) => {
-                self.lines.iter_mut().for_each(|l| l.lru += 1);
-                self.lines[i].lru = 0;
-                unsafe {
-                    let layout = Layout::from_size_align_unchecked(B, 8);
-                    dealloc(self.lines[i].ptr, layout);
-                    self.lines[i].ptr = alloc(layout);
-                    (self.lines[i].ptr as *mut T).write(value);
-                }
+                self.lines[i].inner = Some(Box::new(T::load_or_default()));
                 self.lines[i].type_id = type_id;
             }
             _ => unreachable!(),
         }
     }
+
+    /// Retrieve Cacheable from the cache.
+    fn retrieve<T: Cacheable>(&self) -> CacheResult<&T> {
+        let type_id = T::type_id_usize();
+        self.lines
+            .iter()
+            .find(|l| l.type_id == type_id)
+            .and_then(|l| l.inner.as_deref().and_then(|b| b.downcast_ref()))
+            .ok_or(CacheError::Missing)
+    }
 }
 
 #[derive(Debug)]
-struct CacheLine<const B: usize> {
-    ptr: *mut u8,
+struct CacheLine {
+    inner: Option<Box<dyn Any>>,
     flag: u8,
     lru: u8,
     type_id: usize,
 }
 
-impl<const B: usize> Drop for CacheLine<B> {
-    fn drop(&mut self) {
-        if !self.ptr.is_null() {
-            unsafe { dealloc(self.ptr, Layout::from_size_align_unchecked(B, 8)) };
-        }
+impl Default for CacheLine {
+    fn default() -> Self {
+        unsafe { MaybeUninit::zeroed().assume_init() }
     }
 }
 
@@ -126,17 +118,21 @@ pub trait Cacheable: Any + Default + Sized {
     fn load_or_default() -> Self {
         Self::load().unwrap_or_default()
     }
+    /// Get the lower 64 bit of Cachable's TypeId.
+    fn type_id_usize() -> usize {
+        unsafe { transmute::<TypeId, (u64, u64)>(TypeId::of::<Self>()).1 as usize }
+    }
     /// load Cachable into the cache.
-    fn load_to<const G: usize, const L: usize, const B: usize>(cache: &mut Cache<G, L, B>) {
-        let type_id = unsafe { transmute::<TypeId, (u64, u64)>(TypeId::of::<Self>()).1 as usize };
+    fn load_to<const G: usize, const L: usize>(cache: &mut Cache<G, L>) {
+        let type_id = Self::type_id_usize();
         let group = type_id % G;
-        cache.groups[group].load(Self::load_or_default(), type_id);
+        cache.groups[group].load::<Self>(type_id);
     }
     /// Retrieve Cachable from the cache.
-    fn retrieve<const G: usize, const L: usize, const B: usize>(
-        cache: &mut Cache<G, L, B>,
-    ) -> CacheResult<&Self> {
-        todo!()
+    fn retrieve_from<const G: usize, const L: usize>(cache: &Cache<G, L>) -> CacheResult<&Self> {
+        let type_id = Self::type_id_usize();
+        let group = type_id % G;
+        cache.groups[group].retrieve()
     }
 }
 
@@ -148,7 +144,7 @@ macro_rules! impl_cacheable_for_num {
             }
 
             fn store(&self) -> CacheResult<()> {
-                todo!()
+                Ok(())
             }
         })+
     };
@@ -156,13 +152,26 @@ macro_rules! impl_cacheable_for_num {
 
 impl_cacheable_for_num!(i8, i16, i32, i64, isize, u8, u16, u32, u64, usize);
 
+impl Cacheable for String {
+    fn load() -> CacheResult<Self> {
+        Ok("hello, world.".to_string())
+    }
+
+    fn store(&self) -> CacheResult<()> {
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_cache() {
-        let mut cache: Cache<1, 1, 512> = Default::default();
+        let mut cache: Cache<2, 2> = Default::default();
+        cache.load::<String>();
+        let s = cache.retrieve::<String>().unwrap();
+        assert_eq!(s, "hello, world.");
         cache.load::<i8>();
         cache.load::<i16>();
         cache.load::<i32>();
@@ -173,5 +182,7 @@ mod tests {
         cache.load::<u32>();
         cache.load::<u64>();
         cache.load::<usize>();
+        let n = cache.retrieve::<usize>().unwrap();
+        assert_eq!(*n, 0);
     }
 }
