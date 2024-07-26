@@ -64,12 +64,25 @@
 rom_cache = { version = "0.0.1-alpha1" }
 ```
 
-**Caution: This Version is still not safe to use!!!**
-
 <!-- ABOUT THE PROJECT -->
 ## About The Project
 
-todo
+A rust crate to cache ROM in memory like CPU caching RAM.
+
+Trait `Cacheable` is provided to let user define how to `load` and `store` data in Secondary Storage.
+
+1. Retrieve data (&T)
+- cache miss: `CacheError::Miss`.
+- cache hit: return `&T` from cache.
+2. Retrieve mutable data (&mut T)
+- cache miss: CacheError::Miss
+- cache hit: return `&mut T` from cache, and mark `CacheLine` dirty.
+3. Load data
+- empty cache: load data from Secondary Storage.
+- full cache: LRU algorithm to evict data.
+- already loaded: refresh.
+
+Any dirty `CacheLine` will be written back to Secondary Storage when evicted.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -78,9 +91,9 @@ todo
 ### Built With
 
 * Rust
+* Miri (Testing)
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
-
 
 
 <!-- USAGE EXAMPLES -->
@@ -89,7 +102,8 @@ todo
 
 ```rust no_run
 # use rom_cache::Cache;
-let mut cache: Cache<2, 2> = Default::default();
+// e.g 2-way set associative cache (8 sets)
+let mut cache: Cache<8, 2> = Default::default();
 cache.load::<String>();
 let s = cache.retrieve::<String>().unwrap();
 assert_eq!(s, "hello, world.");
@@ -111,7 +125,7 @@ let n = cache.retrieve::<usize>().unwrap();
 assert_eq!(*n, 0);
 ```
 
-_For more examples, please refer to the [tests](https://github.com/kingwingfly/rom-cache/tree/dev/tests), [Example](https://github.com/kingwingfly/rom-cache/blob/dev/examples/example.rs) or [Documentation](https://docs.rs/rom_cache)_
+_For more examples, please refer to the [Tests](https://github.com/kingwingfly/rom-cache/tree/dev/tests), [Example](https://github.com/kingwingfly/rom-cache/blob/dev/examples/example.rs) or [Documentation](https://docs.rs/rom_cache)_
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -129,7 +143,7 @@ todo
 <!-- ROADMAP -->
 ## Roadmap
 
-todo
+- [ ] allow concurrent access
 
 <!-- CONTRIBUTING -->
 ## Contributing

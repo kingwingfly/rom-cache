@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: install cargo components
-        run: rustup component add clippy
+        run: rustup component add clippy miri
 
       - name: run tests
         run: .github/scripts/test.sh

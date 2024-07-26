@@ -17,7 +17,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: install cargo components
-        run: rustup component add clippy
+        run: |
+          rustup toolchain install nightly
+          rustup override set nightly
+          rustup component add clippy miri
+          cargo +nightly miri setup
       - name: test
         run: .github/scripts/test.sh
       - name: login to crates.io

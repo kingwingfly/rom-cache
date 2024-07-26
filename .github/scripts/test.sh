@@ -9,6 +9,8 @@ statements=(
 
     "cargo test --no-default-features"
 
+    "cargo +nightly miri test -- --nocapture"
+
 #     "LOOM_LOG=trace \
 # LOOM_LOCATION=1 \
 # LOOM_CHECKPOINT_INTERVAL=1 \
