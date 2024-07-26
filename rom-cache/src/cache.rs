@@ -19,6 +19,11 @@ pub struct Cache<const G: usize, const L: usize, const B: usize> {
 
 impl<const G: usize, const L: usize, const B: usize> Default for Cache<G, L, B> {
     fn default() -> Self {
+        #[cfg(debug_assertions)]
+        {
+            assert!(G > 0, "Invalid number of cache groups {}.", G);
+            assert!(L > 0, "Invalid number of cache lines {}.", L);
+        }
         unsafe { MaybeUninit::zeroed().assume_init() }
     }
 }
@@ -48,10 +53,11 @@ impl<const L: usize, const B: usize> CacheGroup<L, B> {
             if line.type_id == type_id {
                 slug.0 = Some(i); // hit
                 continue;
+            } else if slug.1.is_none() && line.ptr.is_null() {
+                slug.1 = Some(i); // find empty
+                continue;
             } else if slug.1.is_none() && line.lru as usize == L - 1 {
-                slug.1 = Some(i); // find expired
-            } else if slug.2.is_none() && line.ptr.is_null() {
-                slug.2 = Some(i); // find empty
+                slug.2 = Some(i); // find expired
             }
         }
         match slug {
@@ -67,24 +73,25 @@ impl<const L: usize, const B: usize> CacheGroup<L, B> {
                     (self.lines[i].ptr as *mut T).write(value);
                 }
             }
-            // expired
+            // empty
             (_, Some(i), None) => {
                 self.lines.iter_mut().for_each(|l| l.lru += 1);
                 self.lines[i].lru = 0;
                 unsafe {
-                    let layout = Layout::from_size_align_unchecked(B, 8);
-                    dealloc(self.lines[i].ptr, layout);
-                    self.lines[i].ptr = alloc(layout);
+                    self.lines[i].ptr = alloc(Layout::from_size_align_unchecked(B, 8));
                     (self.lines[i].ptr as *mut T).write(value);
                 }
                 self.lines[i].type_id = type_id;
             }
-            // empty
+            // expired
             (_, _, Some(i)) => {
                 self.lines.iter_mut().for_each(|l| l.lru += 1);
                 self.lines[i].lru = 0;
                 unsafe {
-                    self.lines[i].ptr = alloc(Layout::from_size_align_unchecked(B, 8));
+                    let layout = Layout::from_size_align_unchecked(B, 8);
+                    assert!(!self.lines[i].ptr.is_null());
+                    dealloc(self.lines[i].ptr, layout);
+                    self.lines[i].ptr = alloc(layout);
                     (self.lines[i].ptr as *mut T).write(value);
                 }
                 self.lines[i].type_id = type_id;
@@ -156,7 +163,7 @@ mod tests {
 
     #[test]
     fn test_cache() {
-        let mut cache: Cache<1, 4, 512> = Default::default();
+        let mut cache: Cache<1, 1, 512> = Default::default();
         cache.load::<i8>();
         cache.load::<i16>();
         cache.load::<i32>();
