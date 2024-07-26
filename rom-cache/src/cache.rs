@@ -54,10 +54,10 @@ impl<const L: usize, const B: usize> CacheGroup<L, B> {
                 slug.0 = Some(i); // hit
                 continue;
             } else if slug.1.is_none() && line.ptr.is_null() {
-                slug.1 = Some(i); // find empty
+                slug.1 = Some(i); // empty
                 continue;
             } else if slug.1.is_none() && line.lru as usize == L - 1 {
-                slug.2 = Some(i); // find expired
+                slug.2 = Some(i); // expired
             }
         }
         match slug {
@@ -89,7 +89,6 @@ impl<const L: usize, const B: usize> CacheGroup<L, B> {
                 self.lines[i].lru = 0;
                 unsafe {
                     let layout = Layout::from_size_align_unchecked(B, 8);
-                    assert!(!self.lines[i].ptr.is_null());
                     dealloc(self.lines[i].ptr, layout);
                     self.lines[i].ptr = alloc(layout);
                     (self.lines[i].ptr as *mut T).write(value);
@@ -119,11 +118,11 @@ impl<const B: usize> Drop for CacheLine<B> {
 
 /// A type that can be cached.
 pub trait Cacheable: Any + Default + Sized {
-    /// Load the value from the storage to cache.
+    /// Load Cachable from the storage to cache.
     fn load() -> CacheResult<Self>;
-    /// Write the value back to storage.
+    /// Write Cachable back to storage.
     fn store(&self) -> CacheResult<()>;
-    /// Load the value from the storage to cache, or return the default value.
+    /// Load Cachable from the storage to cache, or return the default value.
     fn load_or_default() -> Self {
         Self::load().unwrap_or_default()
     }
@@ -133,7 +132,7 @@ pub trait Cacheable: Any + Default + Sized {
         let group = type_id % G;
         cache.groups[group].load(Self::load_or_default(), type_id);
     }
-    /// Retrieve the value from the cache.
+    /// Retrieve Cachable from the cache.
     fn retrieve<const G: usize, const L: usize, const B: usize>(
         cache: &mut Cache<G, L, B>,
     ) -> CacheResult<&Self> {
