@@ -5,3 +5,9 @@
     elided_lifetimes_in_paths
 )]
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
+
+pub mod cache;
+pub mod error;
+
+pub use cache::Cache;
+pub use error::*;
