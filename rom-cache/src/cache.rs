@@ -114,7 +114,7 @@ impl<const L: usize> CacheGroup<L> {
             .ok_or(CacheError::Missing)
     }
 
-    /// Retrieve mut Cacheable from the cache.
+    /// Retrieve mut Cacheable from the cache. Mark the CacheLine dirty.
     fn retrieve_mut<T: Cacheable>(&mut self) -> CacheResult<&mut T> {
         let type_id = T::type_id_usize();
         self.lines

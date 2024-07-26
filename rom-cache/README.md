@@ -78,11 +78,11 @@ Trait `Cacheable` is provided to let user define how to `load` and `store` data 
 - cache miss: CacheError::Miss
 - cache hit: return `&mut T` from cache, and mark `CacheLine` dirty.
 3. Load data
-- empty cache: load data from Secondary Storage.
+- empty cache: load data from Secondary Storage (`Cacheable::load()`).
 - full cache: LRU algorithm to evict data.
 - already loaded: refresh.
 
-Any dirty `CacheLine` will be written back to Secondary Storage when evicted.
+Any dirty `CacheLine` will be written back (`Cacheable::store()`) to Secondary Storage when evicted.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -144,6 +144,7 @@ todo
 ## Roadmap
 
 - [ ] allow concurrent access
+- [ ] auto load when cache miss
 
 <!-- CONTRIBUTING -->
 ## Contributing
