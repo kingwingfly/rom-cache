@@ -1,0 +1,31 @@
+name: publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      rom_cache:
+        description: "publish rom_cache"
+        type: boolean
+        default: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install cargo components
+        run: rustup component add clippy
+
+      - name: run tests
+        run: .github/scripts/test.sh
+
+      - name: login to crates.io
+        run: cargo login ${{ secrets.CRATESIO }}
+
+      - name: publish rom_cache
+        if: ${{ inputs.rom_cache }}
+        run: .github/scripts/publish_test.sh rom_cache && .github/scripts/publish.sh rom_cache

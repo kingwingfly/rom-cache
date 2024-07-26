@@ -1,0 +1,16 @@
+[workspace]
+members = ["rom-cache"]
+resolver = "2"
+
+[workspace.package]
+version = "0.0.1-alpha1"
+authors = ["Louis <836250617@qq.com>"]
+description = "A rust crate to cache ROM in memory like CPU caching RAM."
+license = "MIT"
+edition = "2021"
+repository = "https://github.com/kingwingfly/rom-cache"
+documentation = "https://docs.rs/rom-cache"
+
+[workspace.dependencies]
+rom_cache = { path = "rom-cache", default-features = false }
+loom = { version = "0.7", features = ["checkpoint"] }
