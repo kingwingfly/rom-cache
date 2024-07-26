@@ -9,6 +9,12 @@ use std::mem::{transmute, MaybeUninit};
 /// A cache data structure.
 /// - G: the number of cache groups
 /// - L: the number of cache lines in each group
+///
+/// The cache refreshes itself by the LRU algorithm.
+///
+/// If mut [`Cacheable`] is retrieved, [`Cacheable::store()`] will be called when its `CacheLine` is expired:
+/// 1. The `Cache` is dropped.
+/// 2. The `CacheLine` of the `Cacheable` is replaced by another `Cacheable`.
 #[derive(Debug)]
 pub struct Cache<const G: usize, const L: usize> {
     groups: [CacheGroup<L>; G],
@@ -23,7 +29,7 @@ impl<const G: usize, const L: usize> Default for Cache<G, L> {
 }
 
 impl<const G: usize, const L: usize> Cache<G, L> {
-    /// load a Cacheable into memory
+    /// load a Cacheable into memory, if fail to load, use default.
     pub fn load<T: Cacheable>(&mut self) {
         T::load_to(self);
     }
@@ -125,9 +131,9 @@ impl<const L: usize> CacheGroup<L> {
 struct CacheLine {
     lru: u8,
     type_id: usize,
-    inner: Option<Box<dyn Any>>,
+    inner: Option<Box<dyn Any + Send + Sync>>,
     #[allow(clippy::type_complexity)]
-    store_fn: Option<Box<dyn FnOnce(Box<dyn Any>) -> CacheResult<()>>>,
+    store_fn: Option<Box<dyn FnOnce(Box<dyn Any>) -> CacheResult<()> + Send + Sync>>,
 }
 
 impl std::fmt::Debug for CacheLine {
@@ -156,7 +162,7 @@ impl Drop for CacheLine {
 }
 
 /// A type that can be cached.
-pub trait Cacheable: Any + Default + Sized {
+pub trait Cacheable: Any + Default + Sized + Send + Sync {
     /// Load Cachable from the storage to cache.
     fn load() -> CacheResult<Self>;
     /// Write Cachable back to storage.
