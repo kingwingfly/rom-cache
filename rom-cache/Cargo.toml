@@ -1,5 +1,5 @@
 [package]
-name = "rom-cache"
+name = "rom_cache"
 version.workspace = true
 authors.workspace = true
 description.workspace = true
