@@ -87,7 +87,29 @@ todo
 ## Usage
 ### Example
 
-todo
+```rust no_run
+# use rom_cache::Cache;
+let mut cache: Cache<2, 2> = Default::default();
+cache.load::<String>();
+let s = cache.retrieve::<String>().unwrap();
+assert_eq!(s, "hello, world.");
+cache.load::<i8>();
+cache.load::<i16>();
+cache.load::<i32>();
+cache.load::<i64>();
+cache.load::<isize>();
+
+let n = cache.retrieve_mut::<isize>().unwrap();
+*n = 0;
+
+cache.load::<u8>();
+cache.load::<u16>();
+cache.load::<u32>();
+cache.load::<u64>();
+cache.load::<usize>();
+let n = cache.retrieve::<usize>().unwrap();
+assert_eq!(*n, 0);
+```
 
 _For more examples, please refer to the [tests](https://github.com/kingwingfly/rom-cache/tree/dev/tests), [Example](https://github.com/kingwingfly/rom-cache/blob/dev/examples/example.rs) or [Documentation](https://docs.rs/rom_cache)_
 
