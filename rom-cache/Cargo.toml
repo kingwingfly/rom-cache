@@ -7,7 +7,7 @@ license.workspace = true
 edition.workspace = true
 repository.workspace = true
 documentation.workspace = true
-keywords = ["cache", "data structure", "storage"]
+keywords = ["cache", "storage"]
 
 [package.metadata.docs.rs]
 features = []
