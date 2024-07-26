@@ -75,7 +75,7 @@ Trait `Cacheable` is provided to let user define how to `load` and `store` data 
 - cache miss: `CacheError::Miss`.
 - cache hit: return `&T` from cache.
 2. Retrieve mutable data (&mut T)
-- cache miss: CacheError::Miss
+- cache miss: `CacheError::Miss`
 - cache hit: return `&mut T` from cache, and mark `CacheLine` dirty.
 3. Load data
 - empty cache: load data from Secondary Storage (`Cacheable::load()`).
