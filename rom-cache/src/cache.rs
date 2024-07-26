@@ -32,6 +32,11 @@ impl<const G: usize, const L: usize> Cache<G, L> {
     pub fn retrieve<T: Cacheable>(&self) -> CacheResult<&T> {
         T::retrieve_from(self)
     }
+
+    /// Retrieve a mut Cacheable from the cache.
+    pub fn retrieve_mut<T: Cacheable>(&mut self) -> CacheResult<&mut T> {
+        T::retrieve_mut_from(self)
+    }
 }
 
 #[derive(Debug)]
@@ -72,10 +77,20 @@ impl<const L: usize> CacheGroup<L> {
                 self.lines[i].lru = 0;
                 self.lines[i].inner = Some(Box::new(T::load_or_default()));
             }
-            // empty | expired
-            (_, Some(i), None) | (_, _, Some(i)) => {
+            // empty
+            (_, Some(i), None) => {
                 self.lines.iter_mut().for_each(|l| l.lru += 1);
                 self.lines[i].lru = 0;
+                self.lines[i].inner = Some(Box::new(T::load_or_default()));
+                self.lines[i].type_id = type_id;
+            }
+            //expired
+            (_, _, Some(i)) => {
+                self.lines.iter_mut().for_each(|l| l.lru += 1);
+                self.lines[i].lru = 0;
+                if let Some(store_fn) = self.lines[i].store_fn.take() {
+                    store_fn(self.lines[i].inner.take().unwrap()).ok();
+                }
                 self.lines[i].inner = Some(Box::new(T::load_or_default()));
                 self.lines[i].type_id = type_id;
             }
@@ -92,19 +107,51 @@ impl<const L: usize> CacheGroup<L> {
             .and_then(|l| l.inner.as_deref().and_then(|b| b.downcast_ref()))
             .ok_or(CacheError::Missing)
     }
+
+    /// Retrieve mut Cacheable from the cache.
+    fn retrieve_mut<T: Cacheable>(&mut self) -> CacheResult<&mut T> {
+        let type_id = T::type_id_usize();
+        self.lines
+            .iter_mut()
+            .find(|l| l.type_id == type_id)
+            .and_then(|l| {
+                l.store_fn = Some(Box::new(|b| b.downcast_ref::<T>().unwrap().store()));
+                l.inner.as_deref_mut().and_then(|b| b.downcast_mut())
+            })
+            .ok_or(CacheError::Missing)
+    }
 }
 
-#[derive(Debug)]
 struct CacheLine {
-    inner: Option<Box<dyn Any>>,
-    flag: u8,
     lru: u8,
     type_id: usize,
+    inner: Option<Box<dyn Any>>,
+    #[allow(clippy::type_complexity)]
+    store_fn: Option<Box<dyn FnOnce(Box<dyn Any>) -> CacheResult<()>>>,
+}
+
+impl std::fmt::Debug for CacheLine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CacheLine")
+            .field("lru", &self.lru)
+            .field("type_id", &self.type_id)
+            .field("inner", &self.inner.is_some())
+            .field("dirty", &self.store_fn.is_some())
+            .finish()
+    }
 }
 
 impl Default for CacheLine {
     fn default() -> Self {
         unsafe { MaybeUninit::zeroed().assume_init() }
+    }
+}
+
+impl Drop for CacheLine {
+    fn drop(&mut self) {
+        if let Some(store_fn) = self.store_fn.take() {
+            store_fn(self.inner.take().unwrap()).ok();
+        }
     }
 }
 
@@ -134,6 +181,14 @@ pub trait Cacheable: Any + Default + Sized {
         let group = type_id % G;
         cache.groups[group].retrieve()
     }
+    /// Retrieve mut Cachable from the cache.
+    fn retrieve_mut_from<const G: usize, const L: usize>(
+        cache: &mut Cache<G, L>,
+    ) -> CacheResult<&mut Self> {
+        let type_id = Self::type_id_usize();
+        let group = type_id % G;
+        cache.groups[group].retrieve_mut()
+    }
 }
 
 macro_rules! impl_cacheable_for_num {
@@ -144,6 +199,7 @@ macro_rules! impl_cacheable_for_num {
             }
 
             fn store(&self) -> CacheResult<()> {
+                // println!("{}", std::any::type_name::<Self>());
                 Ok(())
             }
         })+
@@ -177,6 +233,10 @@ mod tests {
         cache.load::<i32>();
         cache.load::<i64>();
         cache.load::<isize>();
+
+        let n = cache.retrieve_mut::<isize>().unwrap();
+        *n = 0;
+
         cache.load::<u8>();
         cache.load::<u16>();
         cache.load::<u32>();
