@@ -5,6 +5,7 @@
     elided_lifetimes_in_paths
 )]
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
+#![cfg_attr(feature = "nightly", feature(trait_upcasting))]
 
 pub mod cache;
 pub mod error;

@@ -10,7 +10,7 @@ LOOM_LOCATION=1 \
 LOOM_CHECKPOINT_INTERVAL=1 \
 LOOM_CHECKPOINT_FILE=loom.json \
 RUSTFLAGS=\"--cfg loom\" \
-cargo test --no-default-features --features derive --test concurrent_test --release"
+cargo test --no-default-features --test concurrent_test --release"
 )
 
 # loop echo and executing statements

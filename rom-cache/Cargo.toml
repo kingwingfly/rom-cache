@@ -15,3 +15,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 thiserror = { version = "1.0" }
+
+[features]
+default = []
+nightly = []

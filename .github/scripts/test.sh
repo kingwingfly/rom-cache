@@ -9,14 +9,17 @@ statements=(
 
     "cargo test --no-default-features"
 
-    "cargo +nightly miri test -- --nocapture"
+    "cargo +nightly test --no-default-features --features nightly"
+
+    "cargo +nightly miri test --no-default-features -- --nocapture"
+    "cargo +nightly miri test --no-default-features --features nightly -- --nocapture"
 
 #     "LOOM_LOG=trace \
 # LOOM_LOCATION=1 \
 # LOOM_CHECKPOINT_INTERVAL=1 \
 # LOOM_CHECKPOINT_FILE=loom.json \
 # RUSTFLAGS=\"--cfg loom\" \
-# cargo test --no-default-features --features derive --test concurrent_test --release"
+# cargo test --no-default-features --test concurrent_test --release"
 
     "cargo doc --no-deps --no-default-features"
 )

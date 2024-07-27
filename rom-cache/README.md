@@ -61,7 +61,7 @@
 ## Import
 ```toml
 [dependencies]
-rom_cache = { version = "0.0.1-alpha1" }
+rom_cache = { version = "0.0.1-alpha2" }
 ```
 
 <!-- ABOUT THE PROJECT -->
@@ -71,18 +71,22 @@ A rust crate to cache ROM in memory like CPU caching RAM.
 
 Trait `Cacheable` is provided to let user define how to `load` and `store` data in Secondary Storage.
 
-1. Retrieve data (&T)
+1. get (RwLockReadGuard)
+- cache hit: return `CacheRef` from cache.
 - cache miss: `CacheError::Miss`.
-- cache hit: return `&T` from cache.
-2. Retrieve mutable data (&mut T)
+2. get mut (RwLockWriteGuard)
+- cache hit: return `CacheMut` from cache, and dereferring `CacheMut` sets `CacheLine` dirty.
 - cache miss: `CacheError::Miss`
-- cache hit: return `&mut T` from cache, and mark `CacheLine` dirty.
-3. Load data
-- empty cache: load data from Secondary Storage (`Cacheable::load()`).
-- full cache: LRU algorithm to evict data.
-- already loaded: refresh.
+3. load
+- cache hit: upgrade LRU.
+- cache miss and find empty line: load data from Secondary Storage (`Cacheable::load()`).
+- cache miss and no empty line: LRU algorithm to evict data.
 
-Any dirty `CacheLine` will be written back (`Cacheable::store()`) to Secondary Storage when evicted.
+Any **dirty** `CacheLine` will be written back (`Cacheable::store()`) to Secondary Storage when evicted.
+
+### feature
+
+- `nightly`: enable `#![feature(trait_upcasting)]`
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -104,25 +108,29 @@ Any dirty `CacheLine` will be written back (`Cacheable::store()`) to Secondary S
 # use rom_cache::Cache;
 // e.g 2-way set associative cache (8 sets)
 let mut cache: Cache<8, 2> = Default::default();
-cache.load::<String>();
-let s = cache.retrieve::<String>().unwrap();
-assert_eq!(s, "hello, world.");
-cache.load::<i8>();
-cache.load::<i16>();
-cache.load::<i32>();
-cache.load::<i64>();
-cache.load::<isize>();
-
-let n = cache.retrieve_mut::<isize>().unwrap();
-*n = 0;
-
-cache.load::<u8>();
-cache.load::<u16>();
-cache.load::<u32>();
-cache.load::<u64>();
-cache.load::<usize>();
-let n = cache.retrieve::<usize>().unwrap();
-assert_eq!(*n, 0);
+cache.load::<String>().unwrap();
+{
+    let mut s = cache.get_mut::<String>().unwrap();
+    *s = "hello, world.".to_string();
+}
+{
+    let s = cache.get::<String>().unwrap();
+    assert_eq!(*s, "hello, world.");
+}
+cache.load::<i32>().unwrap();
+cache.load::<i64>().unwrap();
+cache.load::<isize>().unwrap();
+{
+    let mut n = cache.get_mut::<isize>().unwrap();
+    *n = 42;
+}
+cache.load::<u32>().unwrap();
+cache.load::<u64>().unwrap();
+cache.load::<usize>().unwrap();
+{
+    let n = cache.get::<usize>().unwrap();
+    assert_eq!(*n, 0);
+}
 ```
 
 _For more examples, please refer to the [Tests](https://github.com/kingwingfly/rom-cache/tree/dev/tests), [Example](https://github.com/kingwingfly/rom-cache/blob/dev/examples/example.rs) or [Documentation](https://docs.rs/rom_cache)_
