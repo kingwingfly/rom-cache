@@ -3,11 +3,17 @@
 use crate::error::CacheResult;
 use crate::CacheError;
 
+#[cfg(loom)]
+use loom::sync::atomic::{AtomicBool, Ordering};
+#[cfg(loom)]
+use loom::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::any::{Any, TypeId};
 use std::marker::PhantomData;
 use std::mem::{transmute, MaybeUninit};
 use std::ops::{Deref, DerefMut};
+#[cfg(not(loom))]
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(not(loom))]
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 /// A cache data structure.
@@ -368,5 +374,38 @@ mod tests {
         }
         cache.load::<Vec<u8>>().unwrap();
         cache.load::<Vec<usize>>().unwrap();
+    }
+
+    #[test]
+    #[cfg_attr(not(loom), ignore = "this is loom only test")]
+    fn loom_test() {
+        loom::model(|| {
+            let mut cache: Cache<2, 2> = Default::default();
+            cache.load::<String>().unwrap();
+            {
+                let mut s = cache.get_mut::<String>().unwrap();
+                *s = "hello, world.".to_string();
+            }
+            {
+                let s = cache.get::<String>().unwrap();
+                assert_eq!(*s, "hello, world.");
+            }
+            cache.load::<i32>().unwrap();
+            cache.load::<i64>().unwrap();
+            cache.load::<isize>().unwrap();
+            {
+                let mut n = cache.get_mut::<isize>().unwrap();
+                *n = 42;
+            }
+            cache.load::<u32>().unwrap();
+            cache.load::<u64>().unwrap();
+            cache.load::<usize>().unwrap();
+            {
+                let n = cache.get::<usize>().unwrap();
+                assert_eq!(*n, 0);
+            }
+            cache.load::<Vec<u8>>().unwrap();
+            cache.load::<Vec<usize>>().unwrap();
+        });
     }
 }

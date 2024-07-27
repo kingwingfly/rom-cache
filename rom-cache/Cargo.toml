@@ -13,8 +13,14 @@ keywords = ["cache", "storage"]
 features = []
 rustdoc-args = ["--cfg", "docsrs"]
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
+
 [dependencies]
 thiserror = { version = "1.0" }
+
+[dev-dependencies]
+loom = { workspace = true }
 
 [features]
 default = []
