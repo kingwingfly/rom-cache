@@ -96,21 +96,17 @@ impl<const L: usize> CacheGroup<L> {
             (_, _, Some(i)) => {
                 self.lines.iter_mut().for_each(|l| l.lru += 1);
                 self.lines[i].lru = 0;
+                let rw = self.lines[i].inner.as_ref().unwrap();
+                let mut guard = rw.write().unwrap();
                 if self.lines[i]
                     .dirty
                     .as_ref()
                     .unwrap()
                     .swap(false, Ordering::Acquire)
                 {
-                    self.lines[i]
-                        .inner
-                        .take()
-                        .unwrap()
-                        .into_inner()
-                        .unwrap()
-                        .store()?;
+                    guard.store()?;
                 }
-                self.lines[i].inner = Some(RwLock::new(Box::new(T::load_or_default())));
+                *guard = Box::new(T::load_or_default());
                 self.lines[i].type_id = type_id;
             }
             _ => unreachable!(),
@@ -185,7 +181,7 @@ impl Drop for CacheLine {
                     .into_inner()
                     .unwrap()
                     .store()
-                    .unwrap();
+                    .expect("Panic on storing dirty cache line");
             }
         }
     }
