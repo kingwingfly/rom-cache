@@ -75,7 +75,7 @@ Trait `Cacheable` is provided to let user define how to `load` and `store` data 
 - cache hit: return `CacheRef` from cache.
 - cache miss: `CacheError::Miss`.
 2. get mut (RwLockWriteGuard)
-- cache hit: return `CacheMut` from cache, and dereferring `CacheMut` sets `CacheLine` dirty.
+- cache hit: return `CacheMut` from cache, and dereference `CacheMut` sets `CacheLine` dirty.
 - cache miss: `CacheError::Miss`
 3. load
 - cache hit: upgrade LRU.
