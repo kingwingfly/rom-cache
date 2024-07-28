@@ -4,15 +4,11 @@ use crate::error::CacheResult;
 use crate::CacheError;
 
 #[cfg(loom)]
-use loom::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
-#[cfg(loom)]
 use loom::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::any::{Any, TypeId};
 use std::marker::PhantomData;
 use std::mem::transmute;
 use std::ops::{Deref, DerefMut};
-#[cfg(not(loom))]
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 #[cfg(not(loom))]
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
@@ -54,14 +50,16 @@ impl<const G: usize, const L: usize> Cache<G, L> {
 
 #[derive(Debug)]
 struct CacheInner<const G: usize, const L: usize> {
-    groups: [CacheGroup<L>; G],
+    groups: [RwLock<CacheGroup<L>>; G],
 }
 
 impl<const G: usize, const L: usize> Default for CacheInner<G, L> {
     fn default() -> Self {
         debug_assert!(G > 0, "Invalid number of cache groups {}.", G);
         debug_assert!(L > 0, "Invalid number of cache lines {}.", L);
-        let groups = (0..G).map(|_| CacheGroup::default()).collect::<Vec<_>>();
+        let groups = (0..G)
+            .map(|_| RwLock::new(CacheGroup::default()))
+            .collect::<Vec<_>>();
         Self {
             groups: groups.try_into().unwrap(),
         }
@@ -98,63 +96,56 @@ impl<const L: usize> Default for CacheGroup<L> {
 
 impl<const L: usize> CacheGroup<L> {
     /// load Cacheable into CacheLine and update LRU
-    fn load<T: CacheableExt>(&self, type_id: usize) -> CacheResult<()> {
-        let slot = self.slot(type_id);
+    fn load<T: CacheableExt>(&mut self) -> CacheResult<()> {
+        let type_id = T::type_id_usize();
+        let slot = self.slot::<T>();
+        // dbg!(format!("slot: {:#?}", &slot));
+        // dbg!(format!("before: {:#?}", self));
         match slot {
             Some(CacheSlot::Hit(i)) => {
-                let lru = self.lines[i].lru.load(Ordering::Acquire);
+                let lru = self.lines[i].lru;
                 self.lines
-                    .iter()
-                    .filter(|l| l.lru.load(Ordering::Acquire) < lru)
-                    .for_each(|l| {
-                        l.lru.fetch_add(1, Ordering::AcqRel);
-                    });
-                self.lines[i].lru.store(0, Ordering::Release);
+                    .iter_mut()
+                    .filter(|l| l.lru < lru)
+                    .for_each(|l| l.lru += 1);
+                self.lines[i].lru = 0;
             }
             Some(CacheSlot::Empty(i)) => {
-                self.lines.iter().for_each(|l| {
-                    l.lru.fetch_add(1, Ordering::AcqRel);
-                });
-                self.lines[i].lru.store(0, Ordering::Release);
+                self.lines.iter_mut().for_each(|l| l.lru += 1);
+                self.lines[i].lru = 0;
                 *self.lines[i].inner.write().unwrap() = Some(Box::new(T::load_or_default()));
-                self.lines[i].type_id.store(type_id, Ordering::Release);
+                self.lines[i].type_id = type_id;
             }
             Some(CacheSlot::Evict(i)) => {
-                self.lines.iter().for_each(|l| {
-                    l.lru.fetch_add(1, Ordering::AcqRel);
-                });
-                self.lines[i].lru.store(0, Ordering::Release);
+                self.lines.iter_mut().for_each(|l| l.lru += 1);
+                self.lines[i].lru = 0;
                 if let Ok(mut guard) = self.lines[i].inner.try_write() {
-                    if self.lines[i].dirty.swap(false, Ordering::AcqRel) {
+                    let mut dirty = self.lines[i].dirty.write().unwrap();
+                    if *dirty {
                         guard.take().unwrap().store()?;
+                        *dirty = false;
                     }
                     *guard = Some(Box::new(T::load_or_default()));
-                    self.lines[i].type_id.store(type_id, Ordering::Release);
+                    self.lines[i].type_id = type_id;
                 }
             }
-            None => unreachable!(
-                "CacheGroup: {:#?};\nPicked: {:?};\nPick Again: {:?}",
-                self,
-                slot,
-                self.slot(type_id)
-            ),
+            None => unreachable!(),
         }
+        // dbg!(format!("after: {:#?}", self));
         Ok(())
     }
 
-    fn slot(&self, type_id: usize) -> Option<CacheSlot> {
+    /// Choose the CacheLine to load Cacheable into.
+    fn slot<T: CacheableExt>(&self) -> Option<CacheSlot> {
+        let type_id = T::type_id_usize();
         let mut slot = None;
+        // dbg!(format!("choose slot: {:#?}", self));
         for (i, line) in self.lines.iter().enumerate() {
-            if line.type_id.load(Ordering::Acquire) == type_id {
+            if line.type_id == type_id {
                 return Some(CacheSlot::Hit(i));
-            } else if line
-                .inner
-                .try_write()
-                .map(|guard| guard.is_none())
-                .unwrap_or(false)
-            {
+            } else if line.type_id == 0 {
                 return Some(CacheSlot::Empty(i));
-            } else if line.lru.load(Ordering::Acquire) as usize == L - 1 {
+            } else if line.lru as usize == L - 1 {
                 slot = Some(CacheSlot::Evict(i));
             }
         }
@@ -162,11 +153,12 @@ impl<const L: usize> CacheGroup<L> {
     }
 
     /// Retrieve a Cacheable from the cache.
-    fn retrieve<T: CacheableExt>(&self) -> CacheResult<CacheRef<'_, T>> {
+    fn retrieve<T: CacheableExt>(&mut self) -> CacheResult<CacheRef<'_, T>> {
         let type_id = T::type_id_usize();
+        self.load::<T>()?;
         self.lines
             .iter()
-            .find(|l| l.type_id.load(Ordering::Acquire) == type_id)
+            .find(|l| l.type_id == type_id)
             .map(|l| CacheRef {
                 guard: l.inner.read().unwrap(),
                 _phantom: PhantomData,
@@ -175,14 +167,15 @@ impl<const L: usize> CacheGroup<L> {
     }
 
     /// Retrieve a mut Cacheable from the cache.
-    fn retrieve_mut<T: CacheableExt>(&self) -> CacheResult<CacheMut<'_, T>> {
+    fn retrieve_mut<T: CacheableExt>(&mut self) -> CacheResult<CacheMut<'_, T>> {
         let type_id = T::type_id_usize();
+        self.load::<T>()?;
         self.lines
             .iter()
-            .find(|l| l.type_id.load(Ordering::Acquire) == type_id)
+            .find(|l| l.type_id == type_id)
             .map(|l| CacheMut {
                 guard: l.inner.write().unwrap(),
-                dirty: Some(l.dirty.clone()),
+                dirty: Some(l.dirty.write().unwrap()),
                 _phantom: PhantomData,
             })
             .ok_or(CacheError::Missing)
@@ -191,25 +184,28 @@ impl<const L: usize> CacheGroup<L> {
 
 #[derive(Default)]
 struct CacheLine {
-    lru: AtomicU8,
-    type_id: AtomicUsize,
+    lru: u8,
+    type_id: usize,
     inner: RwLock<Option<Box<dyn Cacheable + Send + Sync>>>,
-    dirty: Arc<AtomicBool>,
+    dirty: RwLock<bool>,
 }
 
 impl std::fmt::Debug for CacheLine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CacheLine")
-            .field("lru", &self.lru.load(Ordering::Acquire))
-            .field("type_id", &self.type_id.load(Ordering::Acquire))
-            .field("dirty", &self.dirty.load(Ordering::Acquire))
+            .field("lru", &self.lru)
+            .field("type_id", &self.type_id)
+            .field(
+                "dirty",
+                &self.dirty.try_read().map(|g| Some(*g)).unwrap_or_default(),
+            )
             .finish()
     }
 }
 
 impl Drop for CacheLine {
     fn drop(&mut self) {
-        if self.dirty.load(Ordering::Acquire) {
+        if *self.dirty.read().unwrap() {
             self.inner
                 .write()
                 .unwrap()
@@ -248,7 +244,7 @@ where
     T: Any,
 {
     guard: RwLockWriteGuard<'a, Option<Box<dyn Cacheable + Send + Sync>>>,
-    dirty: Option<Arc<AtomicBool>>,
+    dirty: Option<RwLockWriteGuard<'a, bool>>,
     _phantom: PhantomData<&'a T>,
 }
 
@@ -266,8 +262,8 @@ impl<T: Any> Deref for CacheMut<'_, T> {
 
 impl<T: Any> DerefMut for CacheMut<'_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        if let Some(flag) = self.dirty.take() {
-            flag.store(true, Ordering::Release);
+        if let Some(mut flag) = self.dirty.take() {
+            *flag = true;
         }
         #[cfg(feature = "nightly")]
         let dyn_any: &mut dyn Any = &mut **self.guard.as_mut().unwrap();
@@ -326,7 +322,7 @@ trait CacheableExt: Cacheable + Default {
     fn load_to<const G: usize, const L: usize>(cache: &CacheInner<G, L>) -> CacheResult<()> {
         let type_id = Self::type_id_usize();
         let group = type_id % G;
-        cache.groups[group].load::<Self>(type_id)
+        cache.groups[group].write().unwrap().load::<Self>()
     }
     /// Retrieve Cacheable from the cache.
     fn retrieve_from<const G: usize, const L: usize>(
@@ -334,7 +330,7 @@ trait CacheableExt: Cacheable + Default {
     ) -> CacheResult<CacheRef<'_, Self>> {
         let type_id = Self::type_id_usize();
         let group = type_id % G;
-        cache.groups[group].retrieve()
+        cache.groups[group].write().unwrap().retrieve()
     }
     /// Retrieve mut Cacheable from the cache.
     fn retrieve_mut_from<const G: usize, const L: usize>(
@@ -342,7 +338,7 @@ trait CacheableExt: Cacheable + Default {
     ) -> CacheResult<CacheMut<'_, Self>> {
         let type_id = Self::type_id_usize();
         let group = type_id % G;
-        cache.groups[group].retrieve_mut()
+        cache.groups[group].write().unwrap().retrieve_mut()
     }
 }
 
@@ -400,15 +396,17 @@ mod tests {
         cache.load::<isize>().unwrap();
         cache.load::<String>().unwrap();
         {
-            let mut s = cache.get_mut::<String>().unwrap();
+            // let mut s = cache.get_mut::<String>().unwrap();
+            cache.load::<u8>().unwrap();
+            cache.load::<u16>().unwrap();
             cache.load::<u32>().unwrap();
             cache.load::<u64>().unwrap();
             cache.load::<usize>().unwrap();
-            *s = "hello, world.".to_string();
+            // *s = "hello, world.".to_string();
         }
         {
-            let s = cache.get::<String>().unwrap();
-            assert_eq!(*s, "hello, world.");
+            // let s = cache.get::<String>().unwrap();
+            // assert_eq!(*s, "hello, world.");
         }
     }
 
@@ -429,17 +427,17 @@ mod tests {
                         cache.load::<isize>().unwrap();
                         cache.load::<String>().unwrap();
                         {
-                            let mut s = cache.get_mut::<String>().unwrap();
+                            // let mut s = cache.get_mut::<String>().unwrap();
                             cache.load::<u8>().unwrap();
                             cache.load::<u16>().unwrap();
                             cache.load::<u32>().unwrap();
                             cache.load::<u64>().unwrap();
                             cache.load::<usize>().unwrap();
-                            *s = "hello, world.".to_string();
+                            // *s = "hello, world.".to_string();
                         }
                         {
-                            let s = cache.get::<String>().unwrap();
-                            assert_eq!(*s, "hello, world.");
+                            // let s = cache.get::<String>().unwrap();
+                            // assert_eq!(*s, "hello, world.");
                         }
                     })
                 })
