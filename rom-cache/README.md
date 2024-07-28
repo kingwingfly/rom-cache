@@ -86,7 +86,7 @@ Any **dirty** `CacheLine` will be written back (`Cacheable::store()`) to Seconda
 
 ### feature
 
-- `nightly`: enable `#![feature(trait_upcasting)]`
+- `nightly`: enable `#![feature(trait_upcasting)]` to simplify the `Cacheable` trait. (Nightly Rust is needed)
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
