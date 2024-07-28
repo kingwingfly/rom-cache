@@ -99,7 +99,7 @@ impl<const L: usize> Default for CacheGroup<L> {
 impl<const L: usize> CacheGroup<L> {
     /// load Cacheable into CacheLine and update LRU
     fn load<T: CacheableExt>(&self, type_id: usize) -> CacheResult<()> {
-        let mut slug = (None, None, vec![]);
+        let mut slug = (None, None, None);
         for (i, line) in self.lines.iter().enumerate() {
             if line.type_id.load(Ordering::Acquire) == type_id {
                 slug.0 = Some(i); // hit
@@ -107,14 +107,14 @@ impl<const L: usize> CacheGroup<L> {
             } else if slug.1.is_none()
                 && line
                     .inner
-                    .try_read()
+                    .try_write()
                     .map(|guard| guard.is_none())
                     .unwrap_or_default()
             {
                 slug.1 = Some(i); // empty
                 continue;
             } else if slug.1.is_none() && line.lru.load(Ordering::Acquire) as usize == L - 1 {
-                slug.2.push(i); // expired
+                slug.2 = Some(i); // expired
             }
         }
         match slug {
@@ -130,7 +130,7 @@ impl<const L: usize> CacheGroup<L> {
                 self.lines[i].lru.store(0, Ordering::Release);
             }
             // empty
-            (_, Some(i), expireds) if expireds.is_empty() => {
+            (_, Some(i), None) => {
                 self.lines.iter().for_each(|l| {
                     l.lru.fetch_add(1, Ordering::AcqRel);
                 });
@@ -139,20 +139,17 @@ impl<const L: usize> CacheGroup<L> {
                 self.lines[i].type_id.store(type_id, Ordering::Release);
             }
             //expired
-            (_, _, expired) if !expired.is_empty() => {
-                for i in expired.into_iter() {
-                    if let Ok(mut guard) = self.lines[i].inner.try_write() {
-                        self.lines.iter().for_each(|l| {
-                            l.lru.fetch_add(1, Ordering::AcqRel);
-                        });
-                        self.lines[i].lru.store(0, Ordering::Release);
-                        if self.lines[i].dirty.swap(false, Ordering::AcqRel) {
-                            guard.take().unwrap().store()?;
-                        }
-                        *guard = Some(Box::new(T::load_or_default()));
-                        self.lines[i].type_id.store(type_id, Ordering::Release);
-                        break;
+            (_, _, Some(i)) => {
+                if let Ok(mut guard) = self.lines[i].inner.try_write() {
+                    self.lines.iter().for_each(|l| {
+                        l.lru.fetch_add(1, Ordering::AcqRel);
+                    });
+                    self.lines[i].lru.store(0, Ordering::Release);
+                    if self.lines[i].dirty.swap(false, Ordering::AcqRel) {
+                        guard.take().unwrap().store()?;
                     }
+                    *guard = Some(Box::new(T::load_or_default()));
+                    self.lines[i].type_id.store(type_id, Ordering::Release);
                 }
             }
             _ => unreachable!(),
@@ -235,7 +232,7 @@ impl<T: Any> Deref for CacheRef<'_, T> {
 
     fn deref(&self) -> &Self::Target {
         #[cfg(feature = "nightly")]
-        let dyn_any: &dyn Any = self.guard.as_ref().unwrap();
+        let dyn_any: &dyn Any = &**self.guard.as_ref().unwrap();
         #[cfg(not(feature = "nightly"))]
         let dyn_any = self.guard.as_ref().unwrap().as_any();
         dyn_any.downcast_ref::<T>().expect("downcast failed")
@@ -257,7 +254,7 @@ impl<T: Any> Deref for CacheMut<'_, T> {
 
     fn deref(&self) -> &Self::Target {
         #[cfg(feature = "nightly")]
-        let dyn_any: &dyn Any = self.guard.as_ref().unwrap();
+        let dyn_any: &dyn Any = &**self.guard.as_ref().unwrap();
         #[cfg(not(feature = "nightly"))]
         let dyn_any = (self.guard.as_ref().unwrap()).as_any();
         dyn_any.downcast_ref::<T>().expect("downcast failed")
@@ -270,7 +267,7 @@ impl<T: Any> DerefMut for CacheMut<'_, T> {
             flag.store(true, Ordering::Release);
         }
         #[cfg(feature = "nightly")]
-        let dyn_any: &mut dyn Any = self.guard.as_mut().unwrap();
+        let dyn_any: &mut dyn Any = &mut **self.guard.as_mut().unwrap();
         #[cfg(not(feature = "nightly"))]
         let dyn_any = self.guard.as_mut().unwrap().as_any_mut();
         dyn_any.downcast_mut::<T>().expect("downcast failed")
@@ -403,17 +400,6 @@ mod tests {
             let s = cache.get::<String>().unwrap();
             assert_eq!(*s, "hello, world.");
         }
-
-        {
-            let mut n = cache.get_mut::<isize>().unwrap();
-            *n = 42;
-        }
-        {
-            let n = cache.get::<usize>().unwrap();
-            assert_eq!(*n, 0);
-        }
-        cache.load::<Vec<u8>>().unwrap();
-        cache.load::<Vec<usize>>().unwrap();
     }
 
     #[test]
@@ -428,7 +414,21 @@ mod tests {
                 .map(|_| {
                     let cache = cache.clone();
                     thread::spawn(move || {
-                        assert!(*cache.get::<i32>().unwrap() == 0);
+                        cache.load::<i32>().unwrap();
+                        cache.load::<i64>().unwrap();
+                        cache.load::<isize>().unwrap();
+                        cache.load::<String>().unwrap();
+                        {
+                            let mut s = cache.get_mut::<String>().unwrap();
+                            cache.load::<u32>().unwrap();
+                            cache.load::<u64>().unwrap();
+                            cache.load::<usize>().unwrap();
+                            *s = "hello, world.".to_string();
+                        }
+                        {
+                            let s = cache.get::<String>().unwrap();
+                            assert_eq!(*s, "hello, world.");
+                        }
                     })
                 })
                 .collect();

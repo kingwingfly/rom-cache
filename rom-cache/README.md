@@ -107,30 +107,7 @@ Any **dirty** `CacheLine` will be written back (`Cacheable::store()`) to Seconda
 ```rust no_run
 # use rom_cache::Cache;
 // e.g 2-way set associative cache (8 sets)
-let mut cache: Cache<8, 2> = Default::default();
-cache.load::<String>().unwrap();
-{
-    let mut s = cache.get_mut::<String>().unwrap();
-    *s = "hello, world.".to_string();
-}
-{
-    let s = cache.get::<String>().unwrap();
-    assert_eq!(*s, "hello, world.");
-}
-cache.load::<i32>().unwrap();
-cache.load::<i64>().unwrap();
-cache.load::<isize>().unwrap();
-{
-    let mut n = cache.get_mut::<isize>().unwrap();
-    *n = 42;
-}
-cache.load::<u32>().unwrap();
-cache.load::<u64>().unwrap();
-cache.load::<usize>().unwrap();
-{
-    let n = cache.get::<usize>().unwrap();
-    assert_eq!(*n, 0);
-}
+let cache: Cache<8, 2> = Default::default();
 ```
 
 _For more examples, please refer to the [Tests](https://github.com/kingwingfly/rom-cache/tree/dev/tests), [Example](https://github.com/kingwingfly/rom-cache/blob/dev/examples/example.rs) or [Documentation](https://docs.rs/rom_cache)_
