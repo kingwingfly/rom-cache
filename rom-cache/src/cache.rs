@@ -99,25 +99,25 @@ impl<const L: usize> Default for CacheGroup<L> {
 impl<const L: usize> CacheGroup<L> {
     /// load Cacheable into CacheLine and update LRU
     fn load<T: CacheableExt>(&self, type_id: usize) -> CacheResult<()> {
-        let mut slug = (None, None, None);
+        let mut slot = (None, None, None);
         for (i, line) in self.lines.iter().enumerate() {
             if line.type_id.load(Ordering::Acquire) == type_id {
-                slug.0 = Some(i); // hit
+                slot.0 = Some(i); // hit
                 continue;
-            } else if slug.1.is_none()
+            } else if slot.1.is_none()
                 && line
                     .inner
                     .try_write()
                     .map(|guard| guard.is_none())
                     .unwrap_or_default()
             {
-                slug.1 = Some(i); // empty
+                slot.1 = Some(i); // empty
                 continue;
-            } else if slug.1.is_none() && line.lru.load(Ordering::Acquire) as usize == L - 1 {
-                slug.2 = Some(i); // expired
+            } else if slot.1.is_none() && line.lru.load(Ordering::Acquire) as usize == L - 1 {
+                slot.2 = Some(i); // expired
             }
         }
-        match slug {
+        match slot {
             // hit
             (Some(i), _, _) => {
                 let lru = self.lines[i].lru.load(Ordering::Acquire);
