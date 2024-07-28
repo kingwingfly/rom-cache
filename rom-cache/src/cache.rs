@@ -99,16 +99,22 @@ impl<const L: usize> Default for CacheGroup<L> {
 impl<const L: usize> CacheGroup<L> {
     /// load Cacheable into CacheLine and update LRU
     fn load<T: CacheableExt>(&self, type_id: usize) -> CacheResult<()> {
-        let mut slug = (None, None, None);
+        let mut slug = (None, None, vec![]);
         for (i, line) in self.lines.iter().enumerate() {
             if line.type_id.load(Ordering::Acquire) == type_id {
                 slug.0 = Some(i); // hit
                 continue;
-            } else if slug.1.is_none() && line.inner.read().unwrap().is_none() {
+            } else if slug.1.is_none()
+                && line
+                    .inner
+                    .try_read()
+                    .map(|guard| guard.is_none())
+                    .unwrap_or_default()
+            {
                 slug.1 = Some(i); // empty
                 continue;
             } else if slug.1.is_none() && line.lru.load(Ordering::Acquire) as usize == L - 1 {
-                slug.2 = Some(i); // expired
+                slug.2.push(i); // expired
             }
         }
         match slug {
@@ -124,7 +130,7 @@ impl<const L: usize> CacheGroup<L> {
                 self.lines[i].lru.store(0, Ordering::Release);
             }
             // empty
-            (_, Some(i), None) => {
+            (_, Some(i), expireds) if expireds.is_empty() => {
                 self.lines.iter().for_each(|l| {
                     l.lru.fetch_add(1, Ordering::AcqRel);
                 });
@@ -133,17 +139,21 @@ impl<const L: usize> CacheGroup<L> {
                 self.lines[i].type_id.store(type_id, Ordering::Release);
             }
             //expired
-            (_, _, Some(i)) => {
-                self.lines.iter().for_each(|l| {
-                    l.lru.fetch_add(1, Ordering::AcqRel);
-                });
-                self.lines[i].lru.store(0, Ordering::Release);
-                let mut guard = self.lines[i].inner.write().unwrap();
-                if self.lines[i].dirty.swap(false, Ordering::AcqRel) {
-                    guard.take().unwrap().store()?;
+            (_, _, expired) if !expired.is_empty() => {
+                for i in expired.into_iter() {
+                    if let Ok(mut guard) = self.lines[i].inner.try_write() {
+                        self.lines.iter().for_each(|l| {
+                            l.lru.fetch_add(1, Ordering::AcqRel);
+                        });
+                        self.lines[i].lru.store(0, Ordering::Release);
+                        if self.lines[i].dirty.swap(false, Ordering::AcqRel) {
+                            guard.take().unwrap().store()?;
+                        }
+                        *guard = Some(Box::new(T::load_or_default()));
+                        self.lines[i].type_id.store(type_id, Ordering::Release);
+                        break;
+                    }
                 }
-                *guard = Some(Box::new(T::load_or_default()));
-                self.lines[i].type_id.store(type_id, Ordering::Release);
             }
             _ => unreachable!(),
         }
