@@ -132,7 +132,12 @@ impl<const L: usize> CacheGroup<L> {
                     self.lines[i].type_id.store(type_id, Ordering::Release);
                 }
             }
-            None => unreachable!("CacheGroup: {:#?}", self),
+            None => unreachable!(
+                "CacheGroup: {:#?};\nPicked: {:?};\nPick Again: {:?}",
+                self,
+                slot,
+                self.slot(type_id)
+            ),
         }
         Ok(())
     }

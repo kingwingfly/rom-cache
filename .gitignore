@@ -15,4 +15,4 @@ Cargo.lock
 
 loom.json
 .DS_Store
-output.txt
+output.log
