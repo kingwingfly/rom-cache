@@ -99,27 +99,9 @@ impl<const L: usize> Default for CacheGroup<L> {
 impl<const L: usize> CacheGroup<L> {
     /// load Cacheable into CacheLine and update LRU
     fn load<T: CacheableExt>(&self, type_id: usize) -> CacheResult<()> {
-        let mut slot = (None, None, None);
-        for (i, line) in self.lines.iter().enumerate() {
-            if line.type_id.load(Ordering::Acquire) == type_id {
-                slot.0 = Some(i); // hit
-                continue;
-            } else if slot.1.is_none()
-                && line
-                    .inner
-                    .try_write()
-                    .map(|guard| guard.is_none())
-                    .unwrap_or_default()
-            {
-                slot.1 = Some(i); // empty
-                continue;
-            } else if slot.1.is_none() && line.lru.load(Ordering::Acquire) as usize == L - 1 {
-                slot.2 = Some(i); // expired
-            }
-        }
+        let slot = self.slot(type_id);
         match slot {
-            // hit
-            (Some(i), _, _) => {
+            Some(CacheSlot::Hit(i)) => {
                 let lru = self.lines[i].lru.load(Ordering::Acquire);
                 self.lines
                     .iter()
@@ -129,8 +111,7 @@ impl<const L: usize> CacheGroup<L> {
                     });
                 self.lines[i].lru.store(0, Ordering::Release);
             }
-            // empty
-            (_, Some(i), None) => {
+            Some(CacheSlot::Empty(i)) => {
                 self.lines.iter().for_each(|l| {
                     l.lru.fetch_add(1, Ordering::AcqRel);
                 });
@@ -138,13 +119,12 @@ impl<const L: usize> CacheGroup<L> {
                 *self.lines[i].inner.write().unwrap() = Some(Box::new(T::load_or_default()));
                 self.lines[i].type_id.store(type_id, Ordering::Release);
             }
-            //expired
-            (_, _, Some(i)) => {
+            Some(CacheSlot::Evict(i)) => {
+                self.lines.iter().for_each(|l| {
+                    l.lru.fetch_add(1, Ordering::AcqRel);
+                });
+                self.lines[i].lru.store(0, Ordering::Release);
                 if let Ok(mut guard) = self.lines[i].inner.try_write() {
-                    self.lines.iter().for_each(|l| {
-                        l.lru.fetch_add(1, Ordering::AcqRel);
-                    });
-                    self.lines[i].lru.store(0, Ordering::Release);
                     if self.lines[i].dirty.swap(false, Ordering::AcqRel) {
                         guard.take().unwrap().store()?;
                     }
@@ -152,9 +132,28 @@ impl<const L: usize> CacheGroup<L> {
                     self.lines[i].type_id.store(type_id, Ordering::Release);
                 }
             }
-            _ => unreachable!(),
+            None => unreachable!("CacheGroup: {:#?}", self),
         }
         Ok(())
+    }
+
+    fn slot(&self, type_id: usize) -> Option<CacheSlot> {
+        let mut slot = None;
+        for (i, line) in self.lines.iter().enumerate() {
+            if line.type_id.load(Ordering::Acquire) == type_id {
+                return Some(CacheSlot::Hit(i));
+            } else if line
+                .inner
+                .try_write()
+                .map(|guard| guard.is_none())
+                .unwrap_or(false)
+            {
+                return Some(CacheSlot::Empty(i));
+            } else if line.lru.load(Ordering::Acquire) as usize == L - 1 {
+                slot = Some(CacheSlot::Evict(i));
+            }
+        }
+        slot
     }
 
     /// Retrieve a Cacheable from the cache.
@@ -196,10 +195,9 @@ struct CacheLine {
 impl std::fmt::Debug for CacheLine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CacheLine")
-            .field("lru", &self.lru)
-            .field("type_id", &self.type_id)
-            .field("inner", &"RwLock".to_string())
-            .field("dirty", &(self.dirty.load(Ordering::Acquire)))
+            .field("lru", &self.lru.load(Ordering::Acquire))
+            .field("type_id", &self.type_id.load(Ordering::Acquire))
+            .field("dirty", &self.dirty.load(Ordering::Acquire))
             .finish()
     }
 }
@@ -272,6 +270,13 @@ impl<T: Any> DerefMut for CacheMut<'_, T> {
         let dyn_any = self.guard.as_mut().unwrap().as_any_mut();
         dyn_any.downcast_mut::<T>().expect("downcast failed")
     }
+}
+
+#[derive(Debug)]
+enum CacheSlot {
+    Hit(usize),
+    Empty(usize),
+    Evict(usize),
 }
 
 /// A type that can be cached.
@@ -410,7 +415,7 @@ mod tests {
         loom::model(|| {
             let cache: Cache<2, 2> = Cache::default();
 
-            let jhs: Vec<_> = (0..3)
+            let jhs: Vec<_> = (0..2)
                 .map(|_| {
                     let cache = cache.clone();
                     thread::spawn(move || {
@@ -420,6 +425,8 @@ mod tests {
                         cache.load::<String>().unwrap();
                         {
                             let mut s = cache.get_mut::<String>().unwrap();
+                            cache.load::<u8>().unwrap();
+                            cache.load::<u16>().unwrap();
                             cache.load::<u32>().unwrap();
                             cache.load::<u64>().unwrap();
                             cache.load::<usize>().unwrap();
