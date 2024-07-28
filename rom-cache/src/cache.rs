@@ -119,14 +119,14 @@ impl<const L: usize> CacheGroup<L> {
                     .iter()
                     .filter(|l| l.lru.load(Ordering::Acquire) < lru)
                     .for_each(|l| {
-                        l.lru.fetch_add(1, Ordering::Release);
+                        l.lru.fetch_add(1, Ordering::AcqRel);
                     });
                 self.lines[i].lru.store(0, Ordering::Release);
             }
             // empty
             (_, Some(i), None) => {
                 self.lines.iter().for_each(|l| {
-                    l.lru.fetch_add(1, Ordering::Release);
+                    l.lru.fetch_add(1, Ordering::AcqRel);
                 });
                 self.lines[i].lru.store(0, Ordering::Release);
                 *self.lines[i].inner.write().unwrap() = Some(Box::new(T::load_or_default()));
@@ -135,7 +135,7 @@ impl<const L: usize> CacheGroup<L> {
             //expired
             (_, _, Some(i)) => {
                 self.lines.iter().for_each(|l| {
-                    l.lru.fetch_add(1, Ordering::Release);
+                    l.lru.fetch_add(1, Ordering::AcqRel);
                 });
                 self.lines[i].lru.store(0, Ordering::Release);
                 let mut guard = self.lines[i].inner.write().unwrap();
