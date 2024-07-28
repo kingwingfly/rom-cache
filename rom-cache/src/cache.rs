@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(not(loom))]
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-/// A cache data structure.
+/// A cache storage structure.
 /// - G: the number of cache groups
 /// - L: the number of cache lines in each group
 ///
