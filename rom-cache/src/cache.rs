@@ -339,34 +339,33 @@ trait CacheableExt: Cacheable + Default {
 
 impl<T> CacheableExt for T where T: Cacheable + Sized + Default {}
 
-macro_rules! impl_cacheable_for_num {
-    ($($t: ty),+) => {
-        $(impl Cacheable for $t {
-            fn load() -> std::io::Result<Self> {
-                Ok(Self::default())
-            }
-            fn store(&self) -> std::io::Result<()> {
-                Ok(())
-            }
-            #[cfg(not(feature = "nightly"))]
-            fn as_any(&self) -> &dyn Any {
-                self
-            }
-            #[cfg(not(feature = "nightly"))]
-            fn as_any_mut(&mut self) -> &mut dyn Any {
-                self
-            }
-        })+
-    };
-}
-
-impl_cacheable_for_num!(i8, i16, i32, i64, isize);
-impl_cacheable_for_num!(u8, u16, u32, u64, usize);
-impl_cacheable_for_num!(String, Vec<u8>, Vec<u16>, Vec<u32>, Vec<u64>, Vec<usize>);
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    macro_rules! impl_cacheable_for_num {
+        ($($t: ty),+) => {
+            $(impl Cacheable for $t {
+                fn load() -> std::io::Result<Self> {
+                    Ok(Self::default())
+                }
+                fn store(&self) -> std::io::Result<()> {
+                    Ok(())
+                }
+                #[cfg(not(feature = "nightly"))]
+                fn as_any(&self) -> &dyn Any {
+                    self
+                }
+                #[cfg(not(feature = "nightly"))]
+                fn as_any_mut(&mut self) -> &mut dyn Any {
+                    self
+                }
+            })+
+        };
+    }
+
+    impl_cacheable_for_num!(i8, i16, i32, i64, isize);
+    impl_cacheable_for_num!(u8, u16, u32, u64, usize, String);
 
     #[test]
     fn test_cache() {

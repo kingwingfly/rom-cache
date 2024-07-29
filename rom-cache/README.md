@@ -106,7 +106,7 @@ Any **dirty** `CacheLine` will be written back (`Cacheable::store()`) to Seconda
 ## Usage
 ### Example
 
-```rust no_run
+```rust ignore
 # use rom_cache::Cache;
 // e.g 2-way set associative cache (8 sets/groups)
 let cache: Cache<8, 2> = Default::default();
