@@ -143,8 +143,9 @@ todo
 <!-- ROADMAP -->
 ## Roadmap
 
-- [ ] allow concurrent access
-- [ ] auto load when cache miss
+- [x] allow concurrent access
+- [x] auto load when getting
+- [ ] benchmark
 
 <!-- CONTRIBUTING -->
 ## Contributing
