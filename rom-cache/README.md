@@ -81,7 +81,7 @@ Trait `Cacheable` is provided to let user define how to `load` and `store` data 
 2. get_mut (RwLockWriteGuard)
 - cache hit: return `CacheMut` from cache, and dereference `CacheMut` will set `CacheLine` dirty.
 - cache busy: `CacheError::Busy`, cannot evict LRU-chosen `CacheLine` since being used.
-- cache locked: `CacheError::Locked`, cannot write-lock while reading or writeing.
+- cache locked: `CacheError::Locked`, cannot write-lock while reading or writing.
 
 Any **dirty** `CacheLine` will be written back (`Cacheable::store()`) to Secondary Storage when evicted.
 
