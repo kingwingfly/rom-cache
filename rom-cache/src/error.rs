@@ -5,7 +5,7 @@ use thiserror::Error;
 /// The error type for this crate.
 #[derive(Error, Debug)]
 pub enum CacheError {
-    /// IO error from [`Cacheable::load()`] and [`Cacheable::store`]
+    /// IO error from [`Cacheable::load()`](crate::cache::Cacheable::load()) and [`Cacheable::store()`](crate::cache::Cacheable::store())
     #[error("Io error: {0}")]
     Io(#[from] std::io::Error),
     /// Cache is missing even loaded. This happens due to concurrency.
