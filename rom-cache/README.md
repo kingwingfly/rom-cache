@@ -61,7 +61,7 @@
 ## Import
 ```toml
 [dependencies]
-rom_cache = { version = "0.0.1-alpha2" }
+rom_cache = { version = "0.0.1" }
 ```
 
 <!-- ABOUT THE PROJECT -->
@@ -71,16 +71,17 @@ A rust crate to cache ROM in memory like CPU caching RAM.
 
 Trait `Cacheable` is provided to let user define how to `load` and `store` data in Secondary Storage.
 
+`get` and `get_mut` will lock the `CacheGroup`, then load and upgrade LRU.
+
 1. get (RwLockReadGuard)
 - cache hit: return `CacheRef` from cache.
-- cache miss: `CacheError::Miss`.
-2. get mut (RwLockWriteGuard)
-- cache hit: return `CacheMut` from cache, and dereference `CacheMut` sets `CacheLine` dirty.
-- cache miss: `CacheError::Miss`
-3. load
-- cache hit: upgrade LRU.
-- cache miss and find empty line: load data from Secondary Storage (`Cacheable::load()`).
-- cache miss and no empty line: LRU algorithm to evict data.
+- cache busy: `CacheError::Busy`, cannot evict LRU-chosen `CacheLine` since being used.
+- cache locked: `CacheError::Locked`, cannot read-lock while writing.
+
+2. get_mut (RwLockWriteGuard)
+- cache hit: return `CacheMut` from cache, and dereference `CacheMut` will set `CacheLine` dirty.
+- cache busy: `CacheError::Busy`, cannot evict LRU-chosen `CacheLine` since being used.
+- cache locked: `CacheError::Locked`, cannot write-lock while reading or writeing.
 
 Any **dirty** `CacheLine` will be written back (`Cacheable::store()`) to Secondary Storage when evicted.
 
@@ -96,6 +97,7 @@ Any **dirty** `CacheLine` will be written back (`Cacheable::store()`) to Seconda
 
 * Rust
 * Miri (Testing)
+* Loom (Concurrency Testing)
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -106,8 +108,21 @@ Any **dirty** `CacheLine` will be written back (`Cacheable::store()`) to Seconda
 
 ```rust no_run
 # use rom_cache::Cache;
-// e.g 2-way set associative cache (8 sets)
+// e.g 2-way set associative cache (8 sets/groups)
 let cache: Cache<8, 2> = Default::default();
+cache.get::<isize>().unwrap();
+cache.get::<String>().unwrap();
+{
+    let mut s = cache.get_mut::<String>().unwrap();
+    cache.get::<u64>().unwrap();
+    cache.get::<usize>().unwrap();
+    *s = "".to_string();    // set dirty
+}
+{
+    let s = cache.get::<String>().unwrap(); // other threads may evict `String` and it's stored,
+                                            // this will load it back
+    assert_eq!(*s, "");                     // The `load` result is `""`
+}
 ```
 
 _For more examples, please refer to the [Tests](https://github.com/kingwingfly/rom-cache/tree/dev/tests), [Example](https://github.com/kingwingfly/rom-cache/blob/dev/examples/example.rs) or [Documentation](https://docs.rs/rom_cache)_
