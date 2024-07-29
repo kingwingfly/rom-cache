@@ -12,9 +12,6 @@ Note: In this file, do not use the hard wrap in the middle of a sentence for com
 ## [0.0.1] - 2024-07-29
 
 - fix: concurrent bugs, tested with `loom`.
-
-## [0.0.1-alpha2] - 2024-07-27
-
 - performance improvement
 
 ## [0.0.1-alpha2] - 2024-07-27
