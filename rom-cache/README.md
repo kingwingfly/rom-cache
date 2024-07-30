@@ -85,7 +85,7 @@ Trait `Cacheable` is provided to let user define how to `load` and `store` data 
 
 Any **dirty** `CacheLine` will be written back (`Cacheable::store()`) to Secondary Storage when evicted.
 
-### feature
+### Features
 
 - `nightly`: enable `#![feature(trait_upcasting)]` to simplify the `Cacheable` trait. (Nightly Rust is needed)
 
