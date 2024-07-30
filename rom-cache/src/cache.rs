@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 /// 1. cache hit: update LRU
 /// 2. cache empty: load Cacheable into the cache
 /// 3. cache group full: evict the least recently used Cacheable
-/// 4. `Cacheable::load()` failed: use default value
+/// 4. `Cacheable::load()` failed: IoError
 ///
 /// The cache refreshes itself by the LRU algorithm.
 ///
@@ -39,12 +39,12 @@ pub struct Cache<const G: usize, const L: usize> {
 
 impl<const G: usize, const L: usize> Cache<G, L> {
     /// Retrieve a Cacheable from the cache.
-    pub fn get<T: Cacheable + Default>(&self) -> CacheResult<CacheRef<'_, T>> {
+    pub fn get<T: Cacheable>(&self) -> CacheResult<CacheRef<'_, T>> {
         self.inner.get::<T>()
     }
 
     /// Retrieve a mut Cacheable from the cache.
-    pub fn get_mut<T: Cacheable + Default>(&self) -> CacheResult<CacheMut<'_, T>> {
+    pub fn get_mut<T: Cacheable>(&self) -> CacheResult<CacheMut<'_, T>> {
         self.inner.get_mut::<T>()
     }
 }
@@ -66,11 +66,11 @@ impl<const G: usize, const L: usize> Default for CacheInner<G, L> {
 }
 
 impl<const G: usize, const L: usize> CacheInner<G, L> {
-    fn get<T: Cacheable + Default>(&self) -> CacheResult<CacheRef<'_, T>> {
+    fn get<T: Cacheable>(&self) -> CacheResult<CacheRef<'_, T>> {
         T::retrieve_from(self)
     }
 
-    fn get_mut<T: Cacheable + Default>(&self) -> CacheResult<CacheMut<'_, T>> {
+    fn get_mut<T: Cacheable>(&self) -> CacheResult<CacheMut<'_, T>> {
         T::retrieve_mut_from(self)
     }
 }
@@ -112,7 +112,7 @@ impl<const L: usize> CacheGroup<L> {
                     l.lru.fetch_add(1, Ordering::AcqRel);
                 });
                 self.lines[i].lru.store(0, Ordering::Release);
-                *self.lines[i].inner.write().unwrap() = Some(Box::new(T::load_or_default()));
+                *self.lines[i].inner.write().unwrap() = Some(Box::new(T::load()?));
                 self.lines[i]
                     .type_id
                     .store(T::type_id_usize(), Ordering::Release);
@@ -128,7 +128,7 @@ impl<const L: usize> CacheGroup<L> {
                         if self.lines[i].dirty.swap(false, Ordering::AcqRel) {
                             guard.take().unwrap().store()?;
                         }
-                        *guard = Some(Box::new(T::load_or_default()));
+                        *guard = Some(Box::new(T::load()?));
                         self.lines[i]
                             .type_id
                             .store(T::type_id_usize(), Ordering::Release);
@@ -221,7 +221,7 @@ impl Drop for CacheLine {
 /// A `RwLockReadGuard` wrapper to a cacheable object.
 pub struct CacheRef<'a, T>
 where
-    T: Any,
+    T: Any + ?Sized,
 {
     guard: RwLockReadGuard<'a, Option<Box<dyn Cacheable + Send + Sync>>>,
     _phantom: PhantomData<&'a T>,
@@ -242,7 +242,7 @@ impl<T: Any> Deref for CacheRef<'_, T> {
 /// A `RwLockWriteGuard` wrapper to a cacheable object.
 pub struct CacheMut<'a, T>
 where
-    T: Any,
+    T: Any + ?Sized,
 {
     guard: RwLockWriteGuard<'a, Option<Box<dyn Cacheable + Send + Sync>>>,
     dirty: Option<Arc<AtomicBool>>,
@@ -310,11 +310,7 @@ pub trait Cacheable: Any + Send + Sync {
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
-trait CacheableExt: Cacheable + Default {
-    /// Load Cacheable from the storage to cache, or return the default value.
-    fn load_or_default() -> Self {
-        Self::load().unwrap_or_default()
-    }
+trait CacheableExt: Cacheable + Sized {
     /// Get the lower 64 bit of Cacheable's TypeId.
     fn type_id_usize() -> usize {
         unsafe { transmute::<TypeId, (u64, u64)>(TypeId::of::<Self>()).1 as usize }
@@ -337,7 +333,7 @@ trait CacheableExt: Cacheable + Default {
     }
 }
 
-impl<T> CacheableExt for T where T: Cacheable + Sized + Default {}
+impl<T> CacheableExt for T where T: Cacheable + Sized {}
 
 #[cfg(test)]
 mod tests {
