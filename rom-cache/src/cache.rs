@@ -97,41 +97,41 @@ impl<const L: usize> CacheGroup<L> {
         let slot = self.slot::<T>();
         match slot {
             Some(CacheSlot::Hit(i)) => {
-                let lru = self.lines[i].lru.load(Ordering::Acquire);
+                let lru = self.lines[i].lru.load(Ordering::Relaxed);
                 self.lines
                     .iter()
-                    .filter(|l| l.lru.load(Ordering::Acquire) < lru)
+                    .filter(|l| l.lru.load(Ordering::Relaxed) < lru)
                     .for_each(|l| {
-                        l.lru.fetch_add(1, Ordering::AcqRel);
+                        l.lru.fetch_add(1, Ordering::Relaxed);
                     });
-                self.lines[i].lru.store(0, Ordering::Release);
+                self.lines[i].lru.store(0, Ordering::Relaxed);
                 Ok(i)
             }
             Some(CacheSlot::Empty(i)) => {
                 self.lines.iter().for_each(|l| {
-                    l.lru.fetch_add(1, Ordering::AcqRel);
+                    l.lru.fetch_add(1, Ordering::Relaxed);
                 });
-                self.lines[i].lru.store(0, Ordering::Release);
+                self.lines[i].lru.store(0, Ordering::Relaxed);
                 *self.lines[i].inner.write().unwrap() = Some(Box::new(T::load()?));
                 self.lines[i]
                     .type_id
-                    .store(T::type_id_usize(), Ordering::Release);
+                    .store(T::type_id_usize(), Ordering::Relaxed);
                 Ok(i)
             }
             Some(CacheSlot::Evict(i)) => {
                 self.lines.iter().for_each(|l| {
-                    l.lru.fetch_add(1, Ordering::AcqRel);
+                    l.lru.fetch_add(1, Ordering::Relaxed);
                 });
-                self.lines[i].lru.store(0, Ordering::Release);
+                self.lines[i].lru.store(0, Ordering::Relaxed);
                 match self.lines[i].inner.try_write() {
                     Ok(mut guard) => {
-                        if self.lines[i].dirty.swap(false, Ordering::AcqRel) {
+                        if self.lines[i].dirty.swap(false, Ordering::Relaxed) {
                             guard.take().unwrap().store()?;
                         }
                         *guard = Some(Box::new(T::load()?));
                         self.lines[i]
                             .type_id
-                            .store(T::type_id_usize(), Ordering::Release);
+                            .store(T::type_id_usize(), Ordering::Relaxed);
                         Ok(i)
                     }
                     Err(_) => Err(CacheError::Busy),
@@ -145,11 +145,11 @@ impl<const L: usize> CacheGroup<L> {
         let type_id = T::type_id_usize();
         let mut slot = None;
         for (i, line) in self.lines.iter().enumerate() {
-            if line.type_id.load(Ordering::Acquire) == type_id {
+            if line.type_id.load(Ordering::Relaxed) == type_id {
                 return Some(CacheSlot::Hit(i));
-            } else if line.type_id.load(Ordering::Acquire) == 0 {
+            } else if line.type_id.load(Ordering::Relaxed) == 0 {
                 return Some(CacheSlot::Empty(i));
-            } else if line.lru.load(Ordering::Acquire) as usize == L - 1 {
+            } else if line.lru.load(Ordering::Relaxed) as usize == L - 1 {
                 slot = Some(CacheSlot::Evict(i));
             }
         }
@@ -199,14 +199,14 @@ impl std::fmt::Debug for CacheLine {
         f.debug_struct("CacheLine")
             .field("lru", &self.lru)
             .field("type_id", &self.type_id)
-            .field("dirty", &self.dirty.load(Ordering::Acquire))
+            .field("dirty", &self.dirty.load(Ordering::Relaxed))
             .finish()
     }
 }
 
 impl Drop for CacheLine {
     fn drop(&mut self) {
-        if self.dirty.load(Ordering::Acquire) {
+        if self.dirty.load(Ordering::Relaxed) {
             self.inner
                 .write()
                 .unwrap()
@@ -264,7 +264,7 @@ impl<T: Any> Deref for CacheMut<'_, T> {
 impl<T: Any> DerefMut for CacheMut<'_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         if let Some(flag) = self.dirty.take() {
-            flag.store(true, Ordering::Release);
+            flag.store(true, Ordering::Relaxed);
         }
         #[cfg(feature = "nightly")]
         let dyn_any: &mut dyn Any = &mut **self.guard.as_mut().unwrap();

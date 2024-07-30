@@ -9,6 +9,10 @@ Note: In this file, do not use the hard wrap in the middle of a sentence for com
 -->
 
 ## [Unreleased]
+## [0.0.4] - 2024-07-31
+
+- relaxed memory ordering
+
 ## [0.0.3] - 2024-07-30
 
 - remove Default trait bound for `get` and `get_mut`
