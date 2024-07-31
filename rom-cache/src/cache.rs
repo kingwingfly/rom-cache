@@ -4,17 +4,17 @@ use crate::error::CacheResult;
 use crate::CacheError;
 
 #[cfg(loom)]
-use loom::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
+use loom::cell::UnsafeCell;
 #[cfg(loom)]
-use loom::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use loom::sync::{Arc, Mutex};
 use std::any::{Any, TypeId};
+use std::cell::UnsafeCell;
 use std::marker::PhantomData;
 use std::mem::transmute;
 use std::ops::{Deref, DerefMut};
+use std::sync::atomic::{AtomicU8, Ordering};
 #[cfg(not(loom))]
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
-#[cfg(not(loom))]
-use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{Arc, Mutex};
 
 /// A cache storage structure.
 /// - G: the number of cache groups
@@ -77,16 +77,34 @@ impl<const G: usize, const L: usize> CacheInner<G, L> {
 
 #[derive(Debug)]
 struct CacheGroup<const L: usize> {
-    lines: [CacheLine; L],
+    lines: UnsafeCell<[CacheLine; L]>,
+    flags: UnsafeCell<[Flag; L]>,
     lock: Mutex<()>,
 }
+
+unsafe impl<const L: usize> Send for CacheGroup<L> {}
+unsafe impl<const L: usize> Sync for CacheGroup<L> {}
 
 impl<const L: usize> Default for CacheGroup<L> {
     fn default() -> Self {
         let lines = (0..L).map(|_| CacheLine::default()).collect::<Vec<_>>();
+        let flags = (0..L).map(|_| Flag::default()).collect::<Vec<_>>();
         Self {
-            lines: lines.try_into().unwrap(),
+            lines: UnsafeCell::new(lines.try_into().unwrap()),
+            flags: UnsafeCell::new(flags.try_into().unwrap()),
             lock: Mutex::new(()),
+        }
+    }
+}
+
+impl<const L: usize> Drop for CacheGroup<L> {
+    fn drop(&mut self) {
+        let lines = unsafe { &mut *self.lines.get() };
+        let flags = unsafe { &*self.flags.get() };
+        for (i, f) in flags.iter().enumerate() {
+            if f.is_dirty() {
+                lines[i].inner.take().unwrap().store().ok();
+            }
         }
     }
 }
@@ -95,46 +113,38 @@ impl<const L: usize> CacheGroup<L> {
     /// load Cacheable into CacheLine and update LRU
     fn load<T: CacheableExt>(&self) -> CacheResult<usize> {
         let slot = self.slot::<T>();
+        let lines = unsafe { &mut *self.lines.get() };
+        let flags = unsafe { &*self.flags.get() };
         match slot {
             Some(CacheSlot::Hit(i)) => {
-                let lru = self.lines[i].lru.load(Ordering::Relaxed);
-                self.lines
-                    .iter()
-                    .filter(|l| l.lru.load(Ordering::Relaxed) < lru)
-                    .for_each(|l| {
-                        l.lru.fetch_add(1, Ordering::Relaxed);
-                    });
-                self.lines[i].lru.store(0, Ordering::Relaxed);
+                let lru = lines[i].lru;
+                lines
+                    .iter_mut()
+                    .filter(|l| l.lru < lru)
+                    .for_each(|l| l.lru += 1);
+                lines[i].lru = 0;
                 Ok(i)
             }
             Some(CacheSlot::Empty(i)) => {
-                self.lines.iter().for_each(|l| {
-                    l.lru.fetch_add(1, Ordering::Relaxed);
-                });
-                self.lines[i].lru.store(0, Ordering::Relaxed);
-                *self.lines[i].inner.write().unwrap() = Some(Box::new(T::load()?));
-                self.lines[i]
-                    .type_id
-                    .store(T::type_id_usize(), Ordering::Relaxed);
+                lines.iter_mut().for_each(|l| l.lru += 1);
+                lines[i].lru = 0;
+                lines[i].inner = Some(Box::new(T::load()?));
+                lines[i].type_id = T::type_id_usize();
                 Ok(i)
             }
             Some(CacheSlot::Evict(i)) => {
-                self.lines.iter().for_each(|l| {
-                    l.lru.fetch_add(1, Ordering::Relaxed);
-                });
-                self.lines[i].lru.store(0, Ordering::Relaxed);
-                match self.lines[i].inner.try_write() {
-                    Ok(mut guard) => {
-                        if self.lines[i].dirty.swap(false, Ordering::Relaxed) {
-                            guard.take().unwrap().store()?;
-                        }
-                        *guard = Some(Box::new(T::load()?));
-                        self.lines[i]
-                            .type_id
-                            .store(T::type_id_usize(), Ordering::Relaxed);
-                        Ok(i)
+                lines.iter_mut().for_each(|l| l.lru += 1);
+                lines[i].lru = 0;
+                if !flags[i].in_using() {
+                    if flags[i].is_dirty() {
+                        lines[i].inner.take().unwrap().store()?;
+                        flags[i].set_clean();
                     }
-                    Err(_) => Err(CacheError::Busy),
+                    lines[i].inner = Some(Box::new(T::load()?));
+                    lines[i].type_id = T::type_id_usize();
+                    Ok(i)
+                } else {
+                    Err(CacheError::Busy)
                 }
             }
             None => unreachable!(),
@@ -144,12 +154,13 @@ impl<const L: usize> CacheGroup<L> {
     fn slot<T: CacheableExt>(&self) -> Option<CacheSlot> {
         let type_id = T::type_id_usize();
         let mut slot = None;
-        for (i, line) in self.lines.iter().enumerate() {
-            if line.type_id.load(Ordering::Relaxed) == type_id {
+        let lines = unsafe { &*self.lines.get() };
+        for (i, line) in lines.iter().enumerate() {
+            if line.type_id == type_id {
                 return Some(CacheSlot::Hit(i));
-            } else if line.type_id.load(Ordering::Relaxed) == 0 {
+            } else if line.type_id == 0 {
                 return Some(CacheSlot::Empty(i));
-            } else if line.lru.load(Ordering::Relaxed) as usize == L - 1 {
+            } else if line.lru as usize == L - 1 {
                 slot = Some(CacheSlot::Evict(i));
             }
         }
@@ -160,38 +171,40 @@ impl<const L: usize> CacheGroup<L> {
     fn retrieve<T: CacheableExt>(&self) -> CacheResult<CacheRef<'_, T>> {
         let _lock = self.lock.lock();
         let i = self.load::<T>()?;
-        self.lines[i]
-            .inner
-            .try_read()
-            .map(|guard| CacheRef {
-                guard,
-                _phantom: PhantomData,
-            })
-            .map_err(|_| CacheError::Locked)
+        let lines = unsafe { &*self.lines.get() };
+        let flags = unsafe { &*self.flags.get() };
+        flags[i].read()?;
+        let inner = lines[i].inner.as_deref().unwrap();
+        let flag = &flags[i];
+        Ok(CacheRef {
+            inner,
+            flag,
+            _phantom: PhantomData,
+        })
     }
 
     /// Retrieve a mut Cacheable from the cache.
     fn retrieve_mut<T: CacheableExt>(&self) -> CacheResult<CacheMut<'_, T>> {
         let _lock = self.lock.lock();
         let i = self.load::<T>()?;
-        self.lines[i]
-            .inner
-            .try_write()
-            .map(|guard| CacheMut {
-                guard,
-                dirty: Some(self.lines[i].dirty.clone()),
-                _phantom: PhantomData,
-            })
-            .map_err(|_| CacheError::Locked)
+        let lines = unsafe { &mut *self.lines.get() };
+        let flags = unsafe { &*self.flags.get() };
+        flags[i].write()?;
+        let inner = lines[i].inner.as_deref_mut().unwrap();
+        let flag = &flags[i];
+        Ok(CacheMut {
+            inner,
+            flag,
+            _phantom: PhantomData,
+        })
     }
 }
 
 #[derive(Default)]
 struct CacheLine {
-    lru: AtomicU8,
-    type_id: AtomicUsize,
-    inner: RwLock<Option<Box<dyn Cacheable + Send + Sync>>>,
-    dirty: Arc<AtomicBool>,
+    lru: u8,
+    type_id: usize,
+    inner: Option<Box<dyn Cacheable>>,
 }
 
 impl std::fmt::Debug for CacheLine {
@@ -199,31 +212,73 @@ impl std::fmt::Debug for CacheLine {
         f.debug_struct("CacheLine")
             .field("lru", &self.lru)
             .field("type_id", &self.type_id)
-            .field("dirty", &self.dirty.load(Ordering::Relaxed))
             .finish()
     }
 }
 
-impl Drop for CacheLine {
-    fn drop(&mut self) {
-        if self.dirty.load(Ordering::Relaxed) {
-            self.inner
-                .write()
-                .unwrap()
-                .take()
-                .unwrap()
-                .store()
-                .expect("Panic on storing dirty cache line");
+#[derive(Debug, Default)]
+struct Flag {
+    // 00000000
+    //        ^ write
+    //  ^^^^^^ read count
+    // ^ dirty
+    inner: AtomicU8,
+}
+
+impl Flag {
+    fn write(&self) -> CacheResult<()> {
+        if self
+            .inner
+            .compare_exchange_weak(0, 0b0000_0001, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
+            Ok(())
+        } else {
+            Err(CacheError::Locked)
         }
+    }
+
+    fn read(&self) -> CacheResult<()> {
+        if self.inner.load(Ordering::Relaxed) & 1 != 1 {
+            self.inner.fetch_add(0b0000_0010, Ordering::Relaxed);
+            Ok(())
+        } else {
+            Err(CacheError::Locked)
+        }
+    }
+
+    fn end_write(&self) {
+        self.inner.fetch_and(0b1111_1110, Ordering::Relaxed);
+    }
+
+    fn end_read(&self) {
+        self.inner.fetch_sub(0b0000_0010, Ordering::Relaxed);
+    }
+
+    fn is_dirty(&self) -> bool {
+        self.inner.load(Ordering::Relaxed) & 0b1000_0000 != 0
+    }
+
+    fn set_dirty(&self) {
+        self.inner.fetch_or(0b1000_0000, Ordering::Relaxed);
+    }
+
+    fn set_clean(&self) {
+        self.inner.fetch_and(0b0111_1111, Ordering::Relaxed);
+    }
+
+    fn in_using(&self) -> bool {
+        self.inner.load(Ordering::Relaxed) & 0b0111_1111 != 0
     }
 }
 
 /// A `RwLockReadGuard` wrapper to a cacheable object.
 pub struct CacheRef<'a, T>
 where
-    T: Any + ?Sized,
+    T: Any,
 {
-    guard: RwLockReadGuard<'a, Option<Box<dyn Cacheable + Send + Sync>>>,
+    inner: &'a dyn Cacheable,
+    flag: &'a Flag,
     _phantom: PhantomData<&'a T>,
 }
 
@@ -232,20 +287,26 @@ impl<T: Any> Deref for CacheRef<'_, T> {
 
     fn deref(&self) -> &Self::Target {
         #[cfg(feature = "nightly")]
-        let dyn_any: &dyn Any = &**self.guard.as_ref().unwrap();
+        let dyn_any: &dyn Any = self.inner;
         #[cfg(not(feature = "nightly"))]
-        let dyn_any = self.guard.as_ref().unwrap().as_any();
+        let dyn_any = self.inner.as_any();
         dyn_any.downcast_ref::<T>().expect("downcast failed")
+    }
+}
+
+impl<T: Any> Drop for CacheRef<'_, T> {
+    fn drop(&mut self) {
+        self.flag.end_read();
     }
 }
 
 /// A `RwLockWriteGuard` wrapper to a cacheable object.
 pub struct CacheMut<'a, T>
 where
-    T: Any + ?Sized,
+    T: Any,
 {
-    guard: RwLockWriteGuard<'a, Option<Box<dyn Cacheable + Send + Sync>>>,
-    dirty: Option<Arc<AtomicBool>>,
+    inner: &'a mut dyn Cacheable,
+    flag: &'a Flag,
     _phantom: PhantomData<&'a T>,
 }
 
@@ -254,23 +315,27 @@ impl<T: Any> Deref for CacheMut<'_, T> {
 
     fn deref(&self) -> &Self::Target {
         #[cfg(feature = "nightly")]
-        let dyn_any: &dyn Any = &**self.guard.as_ref().unwrap();
+        let dyn_any: &dyn Any = self.inner;
         #[cfg(not(feature = "nightly"))]
-        let dyn_any = (self.guard.as_ref().unwrap()).as_any();
+        let dyn_any = self.inner.as_any();
         dyn_any.downcast_ref::<T>().expect("downcast failed")
     }
 }
 
 impl<T: Any> DerefMut for CacheMut<'_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        if let Some(flag) = self.dirty.take() {
-            flag.store(true, Ordering::Relaxed);
-        }
+        self.flag.set_dirty();
         #[cfg(feature = "nightly")]
-        let dyn_any: &mut dyn Any = &mut **self.guard.as_mut().unwrap();
+        let dyn_any: &mut dyn Any = self.inner;
         #[cfg(not(feature = "nightly"))]
-        let dyn_any = self.guard.as_mut().unwrap().as_any_mut();
+        let dyn_any = self.inner.as_any_mut();
         dyn_any.downcast_mut::<T>().expect("downcast failed")
+    }
+}
+
+impl<T: Any> Drop for CacheMut<'_, T> {
+    fn drop(&mut self) {
+        self.flag.end_write();
     }
 }
 
