@@ -4,10 +4,9 @@ use crate::error::CacheResult;
 use crate::CacheError;
 
 #[cfg(loom)]
-use loom::cell::UnsafeCell;
-#[cfg(loom)]
 use loom::sync::{Arc, Mutex};
 use std::any::{Any, TypeId};
+#[cfg(not(loom))]
 use std::cell::UnsafeCell;
 use std::marker::PhantomData;
 use std::mem::transmute;
@@ -399,6 +398,19 @@ trait CacheableExt: Cacheable + Sized {
 }
 
 impl<T> CacheableExt for T where T: Cacheable + Sized {}
+
+#[cfg(loom)]
+#[derive(Debug)]
+struct UnsafeCell<T>(loom::cell::UnsafeCell<T>);
+#[cfg(loom)]
+impl<T> UnsafeCell<T> {
+    fn new(data: T) -> Self {
+        Self(loom::cell::UnsafeCell::new(data))
+    }
+    fn get(&self) -> *mut T {
+        self.0.with_mut(|ptr| ptr)
+    }
+}
 
 #[cfg(test)]
 mod tests {
