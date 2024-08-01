@@ -268,7 +268,7 @@ impl Flag {
     }
 }
 
-/// A `RwLockReadGuard` wrapper to a cacheable object.
+/// An immutable ref wrapper to a cacheable object.
 pub struct CacheRef<'a, T>
 where
     T: Any,
@@ -296,7 +296,7 @@ impl<T: Any> Drop for CacheRef<'_, T> {
     }
 }
 
-/// A `RwLockWriteGuard` wrapper to a cacheable object.
+/// A mutable ref wrapper to a cacheable object.
 pub struct CacheMut<'a, T>
 where
     T: Any,
