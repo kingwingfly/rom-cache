@@ -168,7 +168,7 @@ impl<const L: usize> CacheGroup<L> {
 
     /// Retrieve a Cacheable from the cache.
     fn retrieve<T: CacheableExt>(&self) -> CacheResult<CacheRef<'_, T>> {
-        let _lock = self.lock.lock();
+        let _lock = self.lock.lock().map_err(|_| CacheError::Poisoned)?;
         let i = self.load::<T>()?;
         let lines = unsafe { &*self.lines.get() };
         let flags = unsafe { &*self.flags.get() };
@@ -184,7 +184,7 @@ impl<const L: usize> CacheGroup<L> {
 
     /// Retrieve a mut Cacheable from the cache.
     fn retrieve_mut<T: CacheableExt>(&self) -> CacheResult<CacheMut<'_, T>> {
-        let _lock = self.lock.lock();
+        let _lock = self.lock.lock().map_err(|_| CacheError::Poisoned)?;
         let i = self.load::<T>()?;
         let lines = unsafe { &mut *self.lines.get() };
         let flags = unsafe { &*self.flags.get() };

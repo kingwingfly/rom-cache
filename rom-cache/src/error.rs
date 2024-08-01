@@ -12,7 +12,7 @@ pub enum CacheError {
     #[error("Cache is missing.")]
     Missing,
     /// Lock poisoned due to LockGuard-holder panic.
-    #[error("Lock poisoned.")]
+    #[error("Lock poisoned")]
     Poisoned,
     /// The CacheLine chosen to evict is locked. Consider dropping lock you get, trying again or increasing the capacity of the cache.
     #[error("The CacheLine chosen to evict is locked. Consider dropping lock you get, trying again or increasing the capacity of the cache.")]
