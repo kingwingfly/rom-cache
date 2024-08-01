@@ -1,5 +1,5 @@
 [workspace]
-members = ["rom-cache"]
+members = ["rom-cache", "tests"]
 resolver = "2"
 
 [workspace.package]

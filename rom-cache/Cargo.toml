@@ -18,10 +18,9 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
 
 [dependencies]
 thiserror = { version = "1.0" }
-
-[dev-dependencies]
-loom = { workspace = true }
+loom = { workspace = true, optional = true }
 
 [features]
 default = []
 nightly = []
+loom = ["dep:loom"]

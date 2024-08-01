@@ -208,6 +208,13 @@ impl<const L: usize> CacheGroup<L> {
     }
 }
 
+#[derive(Debug)]
+enum CacheSlot {
+    Hit(usize),
+    Empty(usize),
+    Evict(usize),
+}
+
 #[derive(Default)]
 struct CacheLine {
     lru: u8,
@@ -349,13 +356,6 @@ impl<T: Any> Drop for CacheMut<'_, T> {
     }
 }
 
-#[derive(Debug)]
-enum CacheSlot {
-    Hit(usize),
-    Empty(usize),
-    Evict(usize),
-}
-
 /// A type that can be cached.
 pub trait Cacheable: Any + Send + Sync {
     /// Load Cacheable from the storage
@@ -420,86 +420,5 @@ impl<T> UnsafeCell<T> {
     }
     fn get(&self) -> *mut T {
         self.0.with_mut(|ptr| ptr)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    macro_rules! impl_cacheable_for_num {
-        ($($t: ty),+) => {
-            $(impl Cacheable for $t {
-                fn load() -> std::io::Result<Self> {
-                    Ok(Self::default())
-                }
-                fn store(&self) -> std::io::Result<()> {
-                    Ok(())
-                }
-                #[cfg(not(feature = "nightly"))]
-                fn as_any(&self) -> &dyn Any {
-                    self
-                }
-                #[cfg(not(feature = "nightly"))]
-                fn as_any_mut(&mut self) -> &mut dyn Any {
-                    self
-                }
-            })+
-        };
-    }
-
-    impl_cacheable_for_num!(i8, i16, i32, i64, isize);
-    impl_cacheable_for_num!(u8, u16, u32, u64, usize, String);
-
-    #[test]
-    fn test_cache() {
-        let cache: CacheInner<2, 2> = Default::default();
-        cache.get::<isize>().unwrap();
-        cache.get::<String>().unwrap();
-        {
-            let mut s = cache.get_mut::<String>().unwrap();
-            cache.get::<u64>().unwrap();
-            cache.get::<usize>().unwrap();
-            *s = "".to_string();
-        }
-        {
-            let s = cache.get::<String>().unwrap();
-            assert_eq!(*s, "");
-        }
-    }
-
-    #[test]
-    #[cfg_attr(not(loom), ignore = "this is loom only test")]
-    fn loom_test() {
-        use loom::thread;
-        loom::model(|| {
-            let cache: Cache<1, 2> = Cache::default();
-
-            let jhs: Vec<_> = (0..2)
-                .map(|_| {
-                    let cache = cache.clone();
-                    thread::spawn(move || {
-                        cache.get::<isize>().ok();
-                        cache.get::<String>().ok();
-                        {
-                            let s = cache.get_mut::<String>();
-                            cache.get::<u64>().ok();
-                            cache.get::<usize>().ok();
-                            if let Ok(mut s) = s {
-                                *s = "".to_string();
-                            }
-                        }
-                        {
-                            if let Ok(s) = cache.get::<String>() {
-                                assert_eq!(*s, "");
-                            }
-                        }
-                    })
-                })
-                .collect();
-            for jh in jhs {
-                jh.join().unwrap();
-            }
-        });
     }
 }

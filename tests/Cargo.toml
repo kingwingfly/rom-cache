@@ -1,0 +1,24 @@
+[package]
+name = "tests"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+rom_cache = { path = "../rom-cache" }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
+
+[dev-dependencies]
+loom = { workspace = true }
+
+[[test]]
+name = "loom_test"
+path = "loom_test.rs"
+required-features = ["nightly", "loom"]
+
+[features]
+default = []
+nightly = ["rom_cache/nightly"]
+loom = ["rom_cache/loom"]
