@@ -10,7 +10,7 @@ LOOM_LOCATION=1 \
 LOOM_CHECKPOINT_INTERVAL=1000 \
 LOOM_CHECKPOINT_FILE=loom.json \
 RUSTFLAGS=\"--cfg loom -Znext-solver\" \
-cargo +nightly test --no-default-features --features nightly,loom -p tests --release -- --nocapture"
+cargo +nightly test --no-default-features --features nightly -p tests --release -- --nocapture"
 )
 
 # loop echo and executing statements

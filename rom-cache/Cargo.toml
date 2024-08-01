@@ -18,9 +18,10 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
 
 [dependencies]
 thiserror = { version = "1.0" }
-loom = { workspace = true, optional = true }
+
+[target.'cfg(loom)'.dependencies]
+loom = { workspace = true }
 
 [features]
 default = []
 nightly = []
-loom = ["dep:loom"]

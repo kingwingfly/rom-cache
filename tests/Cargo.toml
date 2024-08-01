@@ -10,15 +10,14 @@ rom_cache = { path = "../rom-cache" }
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
 
-[dev-dependencies]
+[target.'cfg(loom)'.dependencies]
 loom = { workspace = true }
 
 [[test]]
 name = "loom_test"
 path = "loom_test.rs"
-required-features = ["nightly", "loom"]
+required-features = ["nightly"]
 
 [features]
 default = []
 nightly = ["rom_cache/nightly"]
-loom = ["rom_cache/loom"]
