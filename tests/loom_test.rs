@@ -1,4 +1,5 @@
 //! This test need nightly Rust for feature `nightly` of `rom_cache` is enabled.
+#![cfg(loom)]
 
 use loom::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
 use rom_cache::{Cache, Cacheable};
