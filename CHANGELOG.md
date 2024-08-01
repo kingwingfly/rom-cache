@@ -9,6 +9,10 @@ Note: In this file, do not use the hard wrap in the middle of a sentence for com
 -->
 
 ## [Unreleased]
+## [0.0.8] - 2024-08-02
+
+- Default needed as fallback for `get` and `get_mut` if loading fails
+
 ## [0.0.7] - 2024-08-01
 
 - improve documentation
