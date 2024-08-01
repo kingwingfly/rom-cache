@@ -69,21 +69,23 @@ rom_cache = { version = "0.0.1" }
 
 A rust crate to cache ROM in memory like CPU caching RAM.
 
-Trait `Cacheable` is provided to let user define how to `load` and `store` data in Secondary Storage.
+Trait `Cacheable` is provided to enable user define how to `load` and `store` data in Secondary Storage.
 
-`get` and `get_mut` will lock the `CacheGroup`, then load and upgrade LRU.
+`Cache` is the main entry of this crate, which consists of `CacheGroup`s. And `CacheGroup` consists of `CacheLine`s.
 
-1. get (RwLockReadGuard)
-- cache hit: return `CacheRef` from cache.
-- cache busy: `CacheError::Busy`, cannot evict LRU-chosen `CacheLine` since being used.
-- cache locked: `CacheError::Locked`, cannot get read-lock while writing.
+`Cache::get::<T>()` and `Cache::get_mut::<T>()` are provided to retrieve data from Cache and storage. LRU is used to choose the `CacheLine` for `T`.
 
-2. get_mut (RwLockWriteGuard)
-- cache hit: return `CacheMut` from cache, and dereference `CacheMut` will set `CacheLine` dirty.
-- cache busy: `CacheError::Busy`, cannot evict LRU-chosen `CacheLine` since being used.
-- cache locked: `CacheError::Locked`, cannot get write-lock while reading or writing.
+1. get
+- cache hit: return `CacheRef`
+- cache busy: `CacheError::Busy`, LRU-chosen `CacheLine` is still being writting or reading so that unable to be evicted.
+- cache locked: `CacheError::Locked`, cannot read `T` while writing.
 
-Any **dirty** `CacheLine` will be written back (`Cacheable::store()`) to Secondary Storage when evicted.
+2. get_mut
+- cache hit: return `CacheMut`, and dereferencing `CacheMut` will set `CacheLine` dirty.
+- cache busy: `CacheError::Busy`, cannot evict LRU-chosen `CacheLine` which is still being used.
+- cache locked: `CacheError::Locked`, cannot write `T` while reading or writing.
+
+Any **dirty** `CacheLine` will be written back (`Cacheable::store()`) to Secondary Storage when evicted or `Cache` dropped.
 
 ### Features
 
@@ -124,6 +126,7 @@ cache.get::<String>().unwrap();
     assert_eq!(*s, "");                     // The `load` result is `""`
 }
 ```
+
 
 _For more examples, please refer to the [Tests](https://github.com/kingwingfly/rom-cache/tree/dev/tests), [Example](https://github.com/kingwingfly/rom-cache/blob/dev/examples/example.rs) or [Documentation](https://docs.rs/rom_cache)_
 
