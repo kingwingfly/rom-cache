@@ -135,7 +135,7 @@ impl<const L: usize> CacheGroup<L> {
             Some(CacheSlot::Empty(i)) => {
                 lines.iter_mut().for_each(|l| l.lru += 1);
                 lines[i].lru = 0;
-                lines[i].inner = Some(Box::new(T::load()?));
+                lines[i].inner = Some(Box::new(T::load_or_default()));
                 lines[i].type_id = T::type_id_usize();
                 Ok(i)
             }
