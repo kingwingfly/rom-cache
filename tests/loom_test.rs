@@ -8,10 +8,12 @@ loom::thread_local!(
     static NUM2: AtomicIsize = AtomicIsize::new(0);
 );
 
+#[derive(Default)]
 struct Usize {
     inner: usize,
 }
 
+#[derive(Default)]
 struct Isize {
     inner: isize,
 }

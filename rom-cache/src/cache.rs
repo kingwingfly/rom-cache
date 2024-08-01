@@ -37,20 +37,20 @@ pub struct Cache<const G: usize, const L: usize> {
 }
 
 impl<const G: usize, const L: usize> Cache<G, L> {
-    /// Retrieve a Cacheable from the cache.
+    /// Retrieve a Cacheable from the cache. Use Default if `Cacheable::load()` failed.
     /// At most 63 CacheRefs for each Cacheable type can be retrieved at the same time.
     /// - If the cache hit, return a `CacheRef`.
     /// - CacheError::Busy: cache miss, the CacheLine chosen to evict is being used.
     /// - CacheError::Locked: cache hit, but the CacheLine for T is being written.
-    pub fn get<T: Cacheable>(&self) -> CacheResult<CacheRef<'_, T>> {
+    pub fn get<T: Cacheable + Default>(&self) -> CacheResult<CacheRef<'_, T>> {
         self.inner.get::<T>()
     }
 
     /// Retrieve a mut Cacheable from the cache.
-    /// - If the cache hit, return a `CacheMut`.
+    /// - If the cache hit, return a `CacheMut`. Use Default if `Cacheable::load()` failed.
     /// - CacheError::Busy: cache miss, the CacheLine chosen to evict is being used.
     /// - CacheError::Locked: cache hit, but the CacheLine for T is being read or written.
-    pub fn get_mut<T: Cacheable>(&self) -> CacheResult<CacheMut<'_, T>> {
+    pub fn get_mut<T: Cacheable + Default>(&self) -> CacheResult<CacheMut<'_, T>> {
         self.inner.get_mut::<T>()
     }
 }
@@ -72,11 +72,11 @@ impl<const G: usize, const L: usize> Default for CacheInner<G, L> {
 }
 
 impl<const G: usize, const L: usize> CacheInner<G, L> {
-    fn get<T: Cacheable>(&self) -> CacheResult<CacheRef<'_, T>> {
+    fn get<T: Cacheable + Default>(&self) -> CacheResult<CacheRef<'_, T>> {
         T::retrieve_from(self)
     }
 
-    fn get_mut<T: Cacheable>(&self) -> CacheResult<CacheMut<'_, T>> {
+    fn get_mut<T: Cacheable + Default>(&self) -> CacheResult<CacheMut<'_, T>> {
         T::retrieve_mut_from(self)
     }
 }
@@ -118,7 +118,7 @@ impl<const L: usize> Drop for CacheGroup<L> {
 
 impl<const L: usize> CacheGroup<L> {
     /// load Cacheable into CacheLine and update LRU
-    fn load<T: CacheableExt>(&self) -> CacheResult<usize> {
+    fn load<T: CacheableExt + Default>(&self) -> CacheResult<usize> {
         let slot = self.slot::<T>();
         let lines = unsafe { &mut *self.lines.get() };
         let flags = unsafe { &*self.flags.get() };
@@ -147,7 +147,7 @@ impl<const L: usize> CacheGroup<L> {
                         lines[i].inner.take().unwrap().store()?;
                         flags[i].set_clean();
                     }
-                    lines[i].inner = Some(Box::new(T::load()?));
+                    lines[i].inner = Some(Box::new(T::load_or_default()));
                     lines[i].type_id = T::type_id_usize();
                     Ok(i)
                 } else {
@@ -176,7 +176,7 @@ impl<const L: usize> CacheGroup<L> {
 
     /// Retrieve a Cacheable from the cache.
     /// At most 63 CacheRefs for each Cacheable type can be retrieved at the same time
-    fn retrieve<T: CacheableExt>(&self) -> CacheResult<CacheRef<'_, T>> {
+    fn retrieve<T: CacheableExt + Default>(&self) -> CacheResult<CacheRef<'_, T>> {
         let _lock = self.lock.lock().map_err(|_| CacheError::Poisoned)?;
         let i = self.load::<T>()?;
         let lines = unsafe { &*self.lines.get() };
@@ -192,7 +192,7 @@ impl<const L: usize> CacheGroup<L> {
     }
 
     /// Retrieve a mut Cacheable from the cache.
-    fn retrieve_mut<T: CacheableExt>(&self) -> CacheResult<CacheMut<'_, T>> {
+    fn retrieve_mut<T: CacheableExt + Default>(&self) -> CacheResult<CacheMut<'_, T>> {
         let _lock = self.lock.lock().map_err(|_| CacheError::Poisoned)?;
         let i = self.load::<T>()?;
         let lines = unsafe { &mut *self.lines.get() };
@@ -386,6 +386,13 @@ pub trait Cacheable: Any + Send + Sync {
 }
 
 trait CacheableExt: Cacheable + Sized {
+    /// Load Cacheable from the storage, or return default value.
+    fn load_or_default() -> Self
+    where
+        Self: Default,
+    {
+        Self::load().unwrap_or_default()
+    }
     /// Get the lower 64 bit of Cacheable's TypeId.
     fn type_id_usize() -> usize {
         unsafe { transmute::<TypeId, (u64, u64)>(TypeId::of::<Self>()).1 as usize }
@@ -393,7 +400,10 @@ trait CacheableExt: Cacheable + Sized {
     /// Retrieve Cacheable from the cache.
     fn retrieve_from<const G: usize, const L: usize>(
         cache: &CacheInner<G, L>,
-    ) -> CacheResult<CacheRef<'_, Self>> {
+    ) -> CacheResult<CacheRef<'_, Self>>
+    where
+        Self: Default,
+    {
         let type_id = Self::type_id_usize();
         let group = type_id % G;
         cache.groups[group].retrieve()
@@ -401,7 +411,10 @@ trait CacheableExt: Cacheable + Sized {
     /// Retrieve mut Cacheable from the cache.
     fn retrieve_mut_from<const G: usize, const L: usize>(
         cache: &CacheInner<G, L>,
-    ) -> CacheResult<CacheMut<'_, Self>> {
+    ) -> CacheResult<CacheMut<'_, Self>>
+    where
+        Self: Default,
+    {
         let type_id = Self::type_id_usize();
         let group = type_id % G;
         cache.groups[group].retrieve_mut()
