@@ -38,11 +38,18 @@ pub struct Cache<const G: usize, const L: usize> {
 
 impl<const G: usize, const L: usize> Cache<G, L> {
     /// Retrieve a Cacheable from the cache.
+    /// At most 63 CacheRefs for each Cacheable type can be retrieved at the same time.
+    /// - If the cache hit, return a `CacheRef`.
+    /// - CacheError::Busy: cache miss, the CacheLine chosen to evict is being used.
+    /// - CacheError::Locked: cache hit, but the CacheLine for T is being written.
     pub fn get<T: Cacheable>(&self) -> CacheResult<CacheRef<'_, T>> {
         self.inner.get::<T>()
     }
 
     /// Retrieve a mut Cacheable from the cache.
+    /// - If the cache hit, return a `CacheMut`.
+    /// - CacheError::Busy: cache miss, the CacheLine chosen to evict is being used.
+    /// - CacheError::Locked: cache hit, but the CacheLine for T is being read or written.
     pub fn get_mut<T: Cacheable>(&self) -> CacheResult<CacheMut<'_, T>> {
         self.inner.get_mut::<T>()
     }
@@ -81,7 +88,8 @@ struct CacheGroup<const L: usize> {
     lock: Mutex<()>,
 }
 
-unsafe impl<const L: usize> Send for CacheGroup<L> {}
+/// # Safety
+/// All APIs of `CacheGroup` synchronize with the lock.
 unsafe impl<const L: usize> Sync for CacheGroup<L> {}
 
 impl<const L: usize> Default for CacheGroup<L> {
@@ -167,6 +175,7 @@ impl<const L: usize> CacheGroup<L> {
     }
 
     /// Retrieve a Cacheable from the cache.
+    /// At most 63 CacheRefs for each Cacheable type can be retrieved at the same time
     fn retrieve<T: CacheableExt>(&self) -> CacheResult<CacheRef<'_, T>> {
         let _lock = self.lock.lock().map_err(|_| CacheError::Poisoned)?;
         let i = self.load::<T>()?;
@@ -269,6 +278,8 @@ impl Flag {
 }
 
 /// An immutable ref wrapper to a cacheable object.
+///
+/// `Cache::get_mut::<T>()` will return `CacheError::Locked` before this ref dropped.
 pub struct CacheRef<'a, T>
 where
     T: Any,
@@ -297,6 +308,9 @@ impl<T: Any> Drop for CacheRef<'_, T> {
 }
 
 /// A mutable ref wrapper to a cacheable object.
+///
+/// `Cache::get::<T>()` and `Cache::get_mut::<T>()`
+/// will return `CacheError::Locked` before this mut ref dropped.
 pub struct CacheMut<'a, T>
 where
     T: Any,
