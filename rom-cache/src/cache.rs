@@ -226,11 +226,8 @@ struct Flag {
 
 impl Flag {
     fn write(&self) -> CacheResult<()> {
-        if self
-            .inner
-            .compare_exchange_weak(0, 0b0000_0001, Ordering::Relaxed, Ordering::Relaxed)
-            .is_ok()
-        {
+        if self.inner.load(Ordering::Relaxed) == 0 {
+            self.inner.store(0b0000_0001, Ordering::Relaxed);
             Ok(())
         } else {
             Err(CacheError::Locked)
