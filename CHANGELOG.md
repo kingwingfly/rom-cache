@@ -9,7 +9,7 @@ Note: In this file, do not use the hard wrap in the middle of a sentence for com
 -->
 
 ## [Unreleased]
-## [0.0.10] - 2024-08-02
+## [0.0.10] - 2024-08-06
 
 - fix doc mistakes
 
