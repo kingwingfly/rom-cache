@@ -3,9 +3,9 @@ members = ["rom-cache", "tests"]
 resolver = "2"
 
 [workspace.package]
-version = "0.0.10"
+version = "0.0.11"
 authors = ["Louis <836250617@qq.com>"]
-description = "Cache ROM in memory like CPU caching RAM."
+description = "Cache ROM in RAM like CPU caches RAM."
 license = "MIT"
 edition = "2021"
 repository = "https://github.com/kingwingfly/rom-cache"

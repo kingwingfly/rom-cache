@@ -21,7 +21,7 @@
 <div align="center">
 <h3 align="center">rom-cache</h3>
   <p align="center">
-    A rust crate to cache ROM in memory like CPU caching RAM.
+    A rust crate to cache ROM in RAM like CPU caches RAM.
     <br />
     <a href="https://docs.rs/rom_cache"><strong>Explore the docs »</strong></a>
     <br />
