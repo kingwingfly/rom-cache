@@ -38,8 +38,9 @@ pub struct Cache<const G: usize, const L: usize> {
 
 impl<const G: usize, const L: usize> Cache<G, L> {
     /// Retrieve a Cacheable from the cache. Use Default if `Cacheable::load()` failed.
-    /// At most 63 CacheRefs for each Cacheable type can be retrieved at the same time.
-    /// - If the cache hit, return a `CacheRef`.
+    /// At most (usize::MAX >> 2) CacheRefs for **each** Cacheable type can be retrieved at the same time,
+    /// or the counter will overflow and wrap-around, leading to a wrong state.
+    /// - If the cache hit and is readable (i.e not being written), return a `CacheRef`. Use Default if `Cacheable::load()` failed.
     /// - CacheError::Busy: cache miss, the CacheLine chosen to evict is being used.
     /// - CacheError::Locked: cache hit, but the CacheLine for T is being written.
     pub fn get<T: Cacheable + Default>(&self) -> CacheResult<CacheRef<'_, T>> {
@@ -47,7 +48,8 @@ impl<const G: usize, const L: usize> Cache<G, L> {
     }
 
     /// Retrieve a mut Cacheable from the cache.
-    /// - If the cache hit, return a `CacheMut`. Use Default if `Cacheable::load()` failed.
+    /// At most 1 CacheMut for **each** Cacheable type can be retrieved at the same time.
+    /// - If the cache hit and is writable (i.e not being read or written), return a `CacheMut`. Use Default if `Cacheable::load()` failed.
     /// - CacheError::Busy: cache miss, the CacheLine chosen to evict is being used.
     /// - CacheError::Locked: cache hit, but the CacheLine for T is being read or written.
     pub fn get_mut<T: Cacheable + Default>(&self) -> CacheResult<CacheMut<'_, T>> {
@@ -280,7 +282,7 @@ impl Flag {
     }
 
     fn in_using(&self) -> bool {
-        self.inner.load(Ordering::Relaxed) & usize::MAX >> 1 != 0
+        self.inner.load(Ordering::Relaxed) & (usize::MAX >> 1) != 0
     }
 }
 
