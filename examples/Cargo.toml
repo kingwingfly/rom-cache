@@ -1,5 +1,5 @@
 [package]
-name = "tests"
+name = "examples"
 version.workspace = true
 edition.workspace = true
 publish = false
@@ -7,15 +7,9 @@ publish = false
 [dev-dependencies]
 rom_cache = { path = "../rom-cache" }
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
-
-[target.'cfg(loom)'.dev-dependencies]
-loom = { workspace = true }
-
-[[test]]
-name = "loom_test"
-path = "loom_test.rs"
+[[example]]
+name = "example"
+path = "example.rs"
 required-features = ["nightly"]
 
 [features]
