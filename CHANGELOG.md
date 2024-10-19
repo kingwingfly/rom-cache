@@ -9,6 +9,11 @@ Note: In this file, do not use the hard wrap in the middle of a sentence for com
 -->
 
 ## [Unreleased]
+## [0.0.12] - 2024-10-20
+
+- fix bug: if CacheLine number is greater than 255, the lru will not work correctly
+- bump deps
+
 ## [0.0.11] - 2024-08-06
 
 - doc

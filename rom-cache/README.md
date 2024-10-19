@@ -61,7 +61,7 @@
 ## Import
 ```toml
 [dependencies]
-rom_cache = { version = "0.0.10" }
+rom_cache = { version = "0.0.12" }
 ```
 
 <!-- ABOUT THE PROJECT -->
@@ -110,7 +110,7 @@ Any **dirty** `CacheLine` will be written back (`Cacheable::store()`) to Seconda
 
 ```rust ignore
 # use rom_cache::Cache;
-// e.g 2-way set associative cache (8 sets/groups)
+// e.g 2-way set associative cache (8 sets/groups), 16 cache lines in total
 let cache: Cache<8, 2> = Default::default();
 cache.get::<isize>().unwrap();
 cache.get::<String>().unwrap();
@@ -126,7 +126,6 @@ cache.get::<String>().unwrap();
     assert_eq!(*s, "");                     // The `load` result is `""`
 }
 ```
-
 
 _For more examples, please refer to the [Tests](https://github.com/kingwingfly/rom-cache/tree/dev/tests), [Example](https://github.com/kingwingfly/rom-cache/blob/dev/examples/example.rs) or [Documentation](https://docs.rs/rom_cache)_
 

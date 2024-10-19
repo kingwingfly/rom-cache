@@ -11,7 +11,7 @@ use std::cell::UnsafeCell;
 use std::marker::PhantomData;
 use std::mem::transmute;
 use std::ops::{Deref, DerefMut};
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(not(loom))]
 use std::sync::{Arc, Mutex};
 
@@ -167,7 +167,7 @@ impl<const L: usize> CacheGroup<L> {
                 return Some(CacheSlot::Hit(i));
             } else if line.type_id == 0 {
                 return Some(CacheSlot::Empty(i));
-            } else if line.lru as usize == L - 1 {
+            } else if line.lru == L - 1 {
                 slot = Some(CacheSlot::Evict(i));
             }
         }
@@ -217,7 +217,7 @@ enum CacheSlot {
 
 #[derive(Default)]
 struct CacheLine {
-    lru: u8,
+    lru: usize,
     type_id: usize,
     inner: Option<Box<dyn Cacheable>>,
 }
@@ -233,17 +233,17 @@ impl std::fmt::Debug for CacheLine {
 
 #[derive(Debug, Default)]
 struct Flag {
-    // 00000000
+    // 000...00
     //        ^ write
     //  ^^^^^^ read count
     // ^ dirty
-    inner: AtomicU8,
+    inner: AtomicUsize,
 }
 
 impl Flag {
     fn write(&self) -> CacheResult<()> {
         if self.inner.load(Ordering::Relaxed) == 0 {
-            self.inner.store(0b0000_0001, Ordering::Relaxed);
+            self.inner.store(1, Ordering::Relaxed);
             Ok(())
         } else {
             Err(CacheError::Locked)
@@ -252,7 +252,7 @@ impl Flag {
 
     fn read(&self) -> CacheResult<()> {
         if self.inner.load(Ordering::Relaxed) & 1 != 1 {
-            self.inner.fetch_add(0b0000_0010, Ordering::Relaxed);
+            self.inner.fetch_add(2, Ordering::Relaxed);
             Ok(())
         } else {
             Err(CacheError::Locked)
@@ -260,27 +260,27 @@ impl Flag {
     }
 
     fn end_write(&self) {
-        self.inner.fetch_and(0b1111_1110, Ordering::Relaxed);
+        self.inner.fetch_and(usize::MAX - 1, Ordering::Relaxed);
     }
 
     fn end_read(&self) {
-        self.inner.fetch_sub(0b0000_0010, Ordering::Relaxed);
+        self.inner.fetch_sub(2, Ordering::Relaxed);
     }
 
     fn is_dirty(&self) -> bool {
-        self.inner.load(Ordering::Relaxed) & 0b1000_0000 != 0
+        self.inner.load(Ordering::Relaxed) & !(usize::MAX >> 1) != 0
     }
 
     fn set_dirty(&self) {
-        self.inner.fetch_or(0b1000_0000, Ordering::Relaxed);
+        self.inner.fetch_or(!(usize::MAX >> 1), Ordering::Relaxed);
     }
 
     fn set_clean(&self) {
-        self.inner.fetch_and(0b0111_1111, Ordering::Relaxed);
+        self.inner.fetch_and(usize::MAX >> 1, Ordering::Relaxed);
     }
 
     fn in_using(&self) -> bool {
-        self.inner.load(Ordering::Relaxed) & 0b0111_1111 != 0
+        self.inner.load(Ordering::Relaxed) & usize::MAX >> 1 != 0
     }
 }
 
