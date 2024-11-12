@@ -69,6 +69,8 @@ rom_cache = { version = "0.0.12" }
 
 A rust crate to cache ROM in memory like CPU caching RAM.
 
+(Here, ROM is a misnomer, it actually means data stored in Secondary Storage, e.g. HDD, SSD, etc.)
+
 Trait `Cacheable` is provided to enable user define how to `load` and `store` data in Secondary Storage.
 
 `Cache` is the main entry of this crate, which consists of `CacheGroup`s. And `CacheGroup` consists of `CacheLine`s.
