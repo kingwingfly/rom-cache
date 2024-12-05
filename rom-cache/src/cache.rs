@@ -326,7 +326,7 @@ where
 {
     inner: &'a mut dyn Cacheable,
     flag: &'a Flag,
-    _phantom: PhantomData<&'a T>,
+    _phantom: PhantomData<&'a mut T>,
 }
 
 impl<T: Any> Deref for CacheMut<'_, T> {
