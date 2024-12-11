@@ -3,13 +3,14 @@ members = ["rom-cache", "tests", "examples"]
 resolver = "2"
 
 [workspace.package]
-version = "0.0.13"
+version = "0.0.14"
 authors = ["Louis <836250617@qq.com>"]
-description = "A rust crate to cache ROM in memory like CPU caching RAM."
+description = "A rust crate to cache data in memory like CPU caching RAM."
 license = "MIT"
 edition = "2021"
 repository = "https://github.com/kingwingfly/rom-cache"
 documentation = "https://docs.rs/rom-cache"
+keywords = ["lru"]
 
 [workspace.dependencies]
 rom_cache = { path = "rom-cache", default-features = false }

@@ -9,6 +9,13 @@ Note: In this file, do not use the hard wrap in the middle of a sentence for com
 -->
 
 ## [Unreleased]
+## [0.0.14] - 2024-12-07
+
+- better error message for `CacheError::Busy`
+- better tests
+- bump deps
+- concurrency bug fix
+
 ## [0.0.13] - 2024-12-06
 
 - fix: `CfgMut<T>` is `Send` when the type parameter `T` is `Send` (rather than `Sync`)

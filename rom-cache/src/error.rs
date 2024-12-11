@@ -15,7 +15,7 @@ pub enum CacheError {
     #[error("Lock poisoned")]
     Poisoned,
     /// The CacheLine chosen to evict is locked. Consider dropping lock you get, trying again or increasing the capacity of the cache.
-    #[error("The CacheLine chosen to evict is locked. Consider dropping lock you get, trying again or increasing the capacity of the cache.")]
+    #[error("The CacheLine chosen to evict is in using. Consider dropping refs you get, trying again or increasing the capacity of the cache.")]
     Busy,
     /// The CacheLine is locked.
     #[error("The CacheLine is locked.")]

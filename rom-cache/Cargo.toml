@@ -17,7 +17,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
 
 [dependencies]
-thiserror = { version = "1.0" }
+thiserror = { version = "2.0" }
 
 [target.'cfg(loom)'.dependencies]
 loom = { workspace = true }

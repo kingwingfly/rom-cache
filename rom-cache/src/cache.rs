@@ -4,10 +4,11 @@ use crate::error::CacheResult;
 use crate::CacheError;
 
 #[cfg(loom)]
+use loom::cell::UnsafeCell;
+#[cfg(loom)]
 use loom::sync::{Arc, Mutex};
 use std::any::{Any, TypeId};
-#[cfg(not(loom))]
-use std::cell::UnsafeCell;
+use std::array;
 use std::marker::PhantomData;
 use std::mem::transmute;
 use std::ops::{Deref, DerefMut};
@@ -19,7 +20,7 @@ use std::sync::{Arc, Mutex};
 /// - G: the number of cache groups
 /// - L: the number of cache lines in each group
 ///
-/// load a Cacheable into memory:
+/// Load a Cacheable into memory:
 /// 1. cache hit: update LRU
 /// 2. cache empty: load Cacheable into the cache
 /// 3. cache group full: evict the least recently used Cacheable
@@ -31,6 +32,8 @@ use std::sync::{Arc, Mutex};
 /// [`Cacheable::store()`] will be called when:
 /// 1. The `Cache` is dropped.
 /// 2. The `CacheLine` holding the dirty `Cacheable` is evicted.
+///
+/// Cache is a wrapper of `Arc`, so it can be cheap to clone.
 #[derive(Default, Debug, Clone)]
 pub struct Cache<const G: usize, const L: usize> {
     inner: Arc<CacheInner<G, L>>,
@@ -41,7 +44,7 @@ impl<const G: usize, const L: usize> Cache<G, L> {
     /// At most (usize::MAX >> 2) CacheRefs for **each** Cacheable type can be retrieved at the same time,
     /// or the counter will overflow and wrap-around, leading to a wrong state.
     /// - If the cache hit and is readable (i.e not being written), return a `CacheRef`. Use Default if `Cacheable::load()` failed.
-    /// - CacheError::Busy: cache miss, the CacheLine chosen to evict is being used.
+    /// - CacheError::Busy: cache miss, the CacheLine chosen to evict is in using.
     /// - CacheError::Locked: cache hit, but the CacheLine for T is being written.
     pub fn get<T: Cacheable + Default>(&self) -> CacheResult<CacheRef<'_, T>> {
         self.inner.get::<T>()
@@ -50,7 +53,7 @@ impl<const G: usize, const L: usize> Cache<G, L> {
     /// Retrieve a mut Cacheable from the cache.
     /// At most 1 CacheMut for **each** Cacheable type can be retrieved at the same time.
     /// - If the cache hit and is writable (i.e not being read or written), return a `CacheMut`. Use Default if `Cacheable::load()` failed.
-    /// - CacheError::Busy: cache miss, the CacheLine chosen to evict is being used.
+    /// - CacheError::Busy: cache miss, the CacheLine chosen to evict is in using.
     /// - CacheError::Locked: cache hit, but the CacheLine for T is being read or written.
     pub fn get_mut<T: Cacheable + Default>(&self) -> CacheResult<CacheMut<'_, T>> {
         self.inner.get_mut::<T>()
@@ -66,9 +69,8 @@ impl<const G: usize, const L: usize> Default for CacheInner<G, L> {
     fn default() -> Self {
         debug_assert!(G > 0, "Invalid number of cache groups {}.", G);
         debug_assert!(L > 0, "Invalid number of cache lines {}.", L);
-        let groups = (0..G).map(|_| CacheGroup::default()).collect::<Vec<_>>();
         Self {
-            groups: groups.try_into().unwrap(),
+            groups: array::from_fn(|_| CacheGroup::default()),
         }
     }
 }
@@ -85,8 +87,7 @@ impl<const G: usize, const L: usize> CacheInner<G, L> {
 
 #[derive(Debug)]
 struct CacheGroup<const L: usize> {
-    lines: UnsafeCell<[CacheLine; L]>,
-    flags: UnsafeCell<[Flag; L]>,
+    lines: [UnsafeCell<CacheLine>; L],
     lock: Mutex<()>,
 }
 
@@ -96,11 +97,8 @@ unsafe impl<const L: usize> Sync for CacheGroup<L> {}
 
 impl<const L: usize> Default for CacheGroup<L> {
     fn default() -> Self {
-        let lines = (0..L).map(|_| CacheLine::default()).collect::<Vec<_>>();
-        let flags = (0..L).map(|_| Flag::default()).collect::<Vec<_>>();
         Self {
-            lines: UnsafeCell::new(lines.try_into().unwrap()),
-            flags: UnsafeCell::new(flags.try_into().unwrap()),
+            lines: array::from_fn(|_| UnsafeCell::new(CacheLine::default())),
             lock: Mutex::new(()),
         }
     }
@@ -108,11 +106,11 @@ impl<const L: usize> Default for CacheGroup<L> {
 
 impl<const L: usize> Drop for CacheGroup<L> {
     fn drop(&mut self) {
-        let lines = unsafe { &mut *self.lines.get() };
-        let flags = unsafe { &*self.flags.get() };
-        for (i, f) in flags.iter().enumerate() {
-            if f.is_dirty() {
-                lines[i].inner.take().unwrap().store().ok();
+        for line in self.lines.iter() {
+            unsafe {
+                if line.with(|ptr| (*ptr).flag.is_dirty()) {
+                    line.with_mut(|ptr| (*ptr).inner.take().unwrap().store().ok());
+                }
             }
         }
     }
@@ -120,75 +118,81 @@ impl<const L: usize> Drop for CacheGroup<L> {
 
 impl<const L: usize> CacheGroup<L> {
     /// load Cacheable into CacheLine and update LRU
-    fn load<T: CacheableExt + Default>(&self) -> CacheResult<usize> {
+    /// # Safety
+    /// This will modify CacheLine, and lock must be held.
+    unsafe fn load<T: CacheableExt + Default>(&self) -> CacheResult<usize> {
         let slot = self.slot::<T>();
-        let lines = unsafe { &mut *self.lines.get() };
-        let flags = unsafe { &*self.flags.get() };
         match slot {
-            Some(CacheSlot::Hit(i)) => {
-                let lru = lines[i].lru;
-                lines
-                    .iter_mut()
-                    .filter(|l| l.lru < lru)
-                    .for_each(|l| l.lru += 1);
-                lines[i].lru = 0;
+            CacheSlot::Hit(i) => {
+                let lru = self.lines[i].with(|ptr| (*ptr).lru.with(|ptr| *ptr));
+                self.lines
+                    .iter()
+                    .filter(|l| l.with(|ptr| (*ptr).lru.with(|ptr| *ptr < lru)))
+                    .for_each(|l| l.with(|ptr| (*ptr).lru.with_mut(|ptr| *ptr += 1)));
+                self.lines[i].with(|ptr| (*ptr).lru.with_mut(|ptr| *ptr = 0));
                 Ok(i)
             }
-            Some(CacheSlot::Empty(i)) => {
-                lines.iter_mut().for_each(|l| l.lru += 1);
-                lines[i].lru = 0;
-                lines[i].inner = Some(Box::new(T::load_or_default()));
-                lines[i].type_id = T::type_id_usize();
+            CacheSlot::Empty(i) => {
+                self.lines
+                    .iter()
+                    .for_each(|l| l.with(|ptr| (*ptr).lru.with_mut(|ptr| *ptr += 1)));
+                self.lines[i].with_mut(|l| {
+                    (*l).lru.with_mut(|ptr| *ptr = 0);
+                    (*l).inner = Some(Box::new(T::load_or_default()));
+                    (*l).type_id = T::type_id_usize();
+                });
                 Ok(i)
             }
-            Some(CacheSlot::Evict(i)) => {
-                lines.iter_mut().for_each(|l| l.lru += 1);
-                lines[i].lru = 0;
-                if !flags[i].in_using() {
-                    if flags[i].is_dirty() {
-                        lines[i].inner.take().unwrap().store()?;
-                        flags[i].set_clean();
+            CacheSlot::Evict(i) => {
+                self.lines
+                    .iter()
+                    .for_each(|l| l.with(|ptr| (*ptr).lru.with_mut(|ptr| *ptr += 1)));
+                self.lines[i].with(|ptr| (*ptr).lru.with_mut(|ptr| (*ptr) = 0));
+                if !self.lines[i].with(|ptr| (*ptr).flag.in_using()) {
+                    if self.lines[i].with(|ptr| (*ptr).flag.is_dirty()) {
+                        self.lines[i].with_mut(|ptr| (*ptr).inner.take().unwrap().store())?;
+                        self.lines[i].with_mut(|ptr| (*ptr).flag.set_clean());
                     }
-                    lines[i].inner = Some(Box::new(T::load_or_default()));
-                    lines[i].type_id = T::type_id_usize();
+                    self.lines[i].with_mut(|ptr| {
+                        (*ptr).inner = Some(Box::new(T::load_or_default()));
+                        (*ptr).type_id = T::type_id_usize();
+                    });
                     Ok(i)
                 } else {
                     Err(CacheError::Busy)
                 }
             }
-            None => unreachable!(),
+            CacheSlot::None => unreachable!(),
         }
     }
 
-    fn slot<T: CacheableExt>(&self) -> Option<CacheSlot> {
+    /// # Caller
+    /// CacheLines in the Group should not be read only while calling this function.
+    fn slot<T: CacheableExt>(&self) -> CacheSlot {
         let type_id = T::type_id_usize();
-        let mut slot = None;
-        let lines = unsafe { &*self.lines.get() };
-        for (i, line) in lines.iter().enumerate() {
+        let mut slot = CacheSlot::None;
+        for (i, line) in self.lines.iter().enumerate() {
+            let line = unsafe { &*line.with(|ptr| ptr) };
             if line.type_id == type_id {
-                return Some(CacheSlot::Hit(i));
+                return CacheSlot::Hit(i);
             } else if line.type_id == 0 {
-                return Some(CacheSlot::Empty(i));
-            } else if line.lru == L - 1 {
-                slot = Some(CacheSlot::Evict(i));
+                return CacheSlot::Empty(i);
+            } else if unsafe { line.lru.with(|ptr| (*ptr) == L - 1) } {
+                slot = CacheSlot::Evict(i);
             }
         }
         slot
     }
 
     /// Retrieve a Cacheable from the cache.
-    /// At most 63 CacheRefs for each Cacheable type can be retrieved at the same time
     fn retrieve<T: CacheableExt + Default>(&self) -> CacheResult<CacheRef<'_, T>> {
         let _lock = self.lock.lock().map_err(|_| CacheError::Poisoned)?;
-        let i = self.load::<T>()?;
-        let lines = unsafe { &*self.lines.get() };
-        let flags = unsafe { &*self.flags.get() };
-        flags[i].read()?;
-        let inner = lines[i].inner.as_deref().unwrap();
-        let flag = &flags[i];
+        let i = unsafe { self.load::<T>()? };
+        let line = unsafe { &*self.lines[i].with(|ptr| ptr) };
+        line.flag.read()?;
         Ok(CacheRef {
-            inner,
-            flag,
+            inner: line.inner.as_deref().unwrap(),
+            flag: &line.flag,
             _phantom: PhantomData,
         })
     }
@@ -196,15 +200,17 @@ impl<const L: usize> CacheGroup<L> {
     /// Retrieve a mut Cacheable from the cache.
     fn retrieve_mut<T: CacheableExt + Default>(&self) -> CacheResult<CacheMut<'_, T>> {
         let _lock = self.lock.lock().map_err(|_| CacheError::Poisoned)?;
-        let i = self.load::<T>()?;
-        let lines = unsafe { &mut *self.lines.get() };
-        let flags = unsafe { &*self.flags.get() };
-        flags[i].write()?;
-        let inner = lines[i].inner.as_deref_mut().unwrap();
-        let flag = &flags[i];
+        let i = unsafe { self.load::<T>()? };
+        let line = unsafe { &mut *self.lines[i].with_mut(|ptr| ptr) };
+        line.flag.write()?;
+        #[cfg(loom)]
+        {
+            let flag = line.flag.inner.load(Ordering::Relaxed);
+            assert_eq!(flag & (usize::MAX << 1 >> 1), 1, "write while reading");
+        }
         Ok(CacheMut {
-            inner,
-            flag,
+            inner: line.inner.as_deref_mut().unwrap(),
+            flag: &line.flag,
             _phantom: PhantomData,
         })
     }
@@ -215,13 +221,25 @@ enum CacheSlot {
     Hit(usize),
     Empty(usize),
     Evict(usize),
+    None,
 }
 
-#[derive(Default)]
 struct CacheLine {
-    lru: usize,
+    flag: Flag,
+    lru: UnsafeCell<usize>,
     type_id: usize,
     inner: Option<Box<dyn Cacheable>>,
+}
+
+impl Default for CacheLine {
+    fn default() -> Self {
+        Self {
+            flag: Flag::default(),
+            lru: UnsafeCell::new(0),
+            type_id: 0,
+            inner: None,
+        }
+    }
 }
 
 impl std::fmt::Debug for CacheLine {
@@ -244,20 +262,25 @@ struct Flag {
 
 impl Flag {
     fn write(&self) -> CacheResult<()> {
-        if self.inner.load(Ordering::Relaxed) == 0 {
-            self.inner.store(1, Ordering::Relaxed);
-            Ok(())
-        } else {
-            Err(CacheError::Locked)
-        }
+        self.inner
+            .compare_exchange(0, 1, Ordering::Relaxed, Ordering::Relaxed)
+            .map_err(|_| CacheError::Locked)?;
+        Ok(())
     }
 
     fn read(&self) -> CacheResult<()> {
-        if self.inner.load(Ordering::Relaxed) & 1 != 1 {
-            self.inner.fetch_add(2, Ordering::Relaxed);
-            Ok(())
-        } else {
-            Err(CacheError::Locked)
+        loop {
+            let flag = self.inner.load(Ordering::Relaxed);
+            if flag & 1 == 1 {
+                return Err(CacheError::Locked);
+            }
+            if self
+                .inner
+                .compare_exchange(flag, flag + 2, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+            {
+                return Ok(());
+            }
         }
     }
 
@@ -425,15 +448,25 @@ trait CacheableExt: Cacheable + Sized {
 
 impl<T> CacheableExt for T where T: Cacheable + Sized {}
 
-#[cfg(loom)]
+#[cfg(not(loom))]
 #[derive(Debug)]
-struct UnsafeCell<T>(loom::cell::UnsafeCell<T>);
-#[cfg(loom)]
+struct UnsafeCell<T>(std::cell::UnsafeCell<T>);
+#[cfg(not(loom))]
 impl<T> UnsafeCell<T> {
-    fn new(data: T) -> Self {
-        Self(loom::cell::UnsafeCell::new(data))
+    fn new(value: T) -> Self {
+        Self(std::cell::UnsafeCell::new(value))
     }
-    fn get(&self) -> *mut T {
-        self.0.with_mut(|ptr| ptr)
+
+    #[allow(unused)]
+    unsafe fn get(&self) -> *mut T {
+        self.0.get()
+    }
+
+    unsafe fn with<R>(&self, f: impl FnOnce(*const T) -> R) -> R {
+        f(self.0.get())
+    }
+
+    unsafe fn with_mut<R>(&self, f: impl FnOnce(*mut T) -> R) -> R {
+        f(self.0.get())
     }
 }
