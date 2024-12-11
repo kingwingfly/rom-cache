@@ -9,7 +9,7 @@ Note: In this file, do not use the hard wrap in the middle of a sentence for com
 -->
 
 ## [Unreleased]
-## [0.0.14] - 2024-12-07
+## [0.0.14] - 2024-12-12
 
 - better error message for `CacheError::Busy`
 - better tests
