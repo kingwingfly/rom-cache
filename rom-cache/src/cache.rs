@@ -204,10 +204,11 @@ impl<const L: usize> CacheGroup<L> {
         let line = unsafe { &mut *self.lines[i].with_mut(|ptr| ptr) };
         line.flag.write()?;
         #[cfg(loom)]
-        {
-            let flag = line.flag.inner.load(Ordering::Relaxed);
-            assert_eq!(flag & (usize::MAX << 1 >> 1), 1, "write while reading");
-        }
+        assert_eq!(
+            line.flag.inner.load(Ordering::Relaxed) & (usize::MAX << 1 >> 1),
+            1,
+            "write while reading"
+        );
         Ok(CacheMut {
             inner: line.inner.as_deref_mut().unwrap(),
             flag: &line.flag,
