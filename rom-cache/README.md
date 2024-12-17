@@ -61,7 +61,7 @@
 ## Import
 ```toml
 [dependencies]
-rom_cache = { version = "0.0.13" }
+rom_cache = { version = "0.0.16" }
 ```
 
 <!-- ABOUT THE PROJECT -->
