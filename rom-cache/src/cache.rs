@@ -10,7 +10,7 @@ use loom::sync::{Arc, Mutex};
 use std::any::{Any, TypeId};
 use std::array;
 use std::marker::PhantomData;
-use std::mem::transmute;
+use std::mem::{transmute, MaybeUninit};
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(not(loom))]
@@ -109,7 +109,7 @@ impl<const L: usize> Drop for CacheGroup<L> {
         for line in self.lines.iter() {
             unsafe {
                 if line.with(|ptr| (*ptr).flag.is_dirty()) {
-                    line.with_mut(|ptr| (*ptr).inner.take().unwrap().store().ok());
+                    line.with_mut(|ptr| (*ptr).inner.assume_init_ref().store().ok());
                 }
             }
         }
@@ -117,7 +117,7 @@ impl<const L: usize> Drop for CacheGroup<L> {
 }
 
 impl<const L: usize> CacheGroup<L> {
-    /// load Cacheable into CacheLine and update LRU
+    /// load Cacheable into CacheLine if not exist, update LRU and return the index.
     /// # Safety
     /// This will modify CacheLine, and lock must be held.
     unsafe fn load<T: CacheableExt + Default>(&self) -> CacheResult<usize> {
@@ -138,7 +138,7 @@ impl<const L: usize> CacheGroup<L> {
                     .for_each(|l| l.with(|ptr| (*ptr).lru.with_mut(|ptr| *ptr += 1)));
                 self.lines[i].with_mut(|l| {
                     (*l).lru.with_mut(|ptr| *ptr = 0);
-                    (*l).inner = Some(Box::new(T::load_or_default()));
+                    (*l).inner.write(Box::new(T::load_or_default()));
                     (*l).type_id = T::type_id_usize();
                 });
                 Ok(i)
@@ -150,11 +150,11 @@ impl<const L: usize> CacheGroup<L> {
                 self.lines[i].with(|ptr| (*ptr).lru.with_mut(|ptr| (*ptr) = 0));
                 if !self.lines[i].with(|ptr| (*ptr).flag.in_using()) {
                     if self.lines[i].with(|ptr| (*ptr).flag.is_dirty()) {
-                        self.lines[i].with_mut(|ptr| (*ptr).inner.take().unwrap().store())?;
+                        self.lines[i].with_mut(|ptr| (*ptr).inner.assume_init_ref().store())?;
                         self.lines[i].with_mut(|ptr| (*ptr).flag.set_clean());
                     }
                     self.lines[i].with_mut(|ptr| {
-                        (*ptr).inner = Some(Box::new(T::load_or_default()));
+                        (*ptr).inner.write(Box::new(T::load_or_default()));
                         (*ptr).type_id = T::type_id_usize();
                     });
                     Ok(i)
@@ -189,9 +189,9 @@ impl<const L: usize> CacheGroup<L> {
         let _lock = self.lock.lock().map_err(|_| CacheError::Poisoned)?;
         let i = unsafe { self.load::<T>()? };
         let line = unsafe { &*self.lines[i].with(|ptr| ptr) };
-        line.flag.read()?;
+        unsafe { line.flag.set_read_locked()? };
         Ok(CacheRef {
-            inner: line.inner.as_deref().unwrap(),
+            inner: unsafe { line.inner.assume_init_ref().as_ref() },
             flag: &line.flag,
             _phantom: PhantomData,
         })
@@ -202,7 +202,7 @@ impl<const L: usize> CacheGroup<L> {
         let _lock = self.lock.lock().map_err(|_| CacheError::Poisoned)?;
         let i = unsafe { self.load::<T>()? };
         let line = unsafe { &mut *self.lines[i].with_mut(|ptr| ptr) };
-        line.flag.write()?;
+        line.flag.set_write()?;
         #[cfg(loom)]
         assert_eq!(
             line.flag.inner.load(Ordering::Relaxed) & (usize::MAX << 1 >> 1),
@@ -210,7 +210,7 @@ impl<const L: usize> CacheGroup<L> {
             "write while reading"
         );
         Ok(CacheMut {
-            inner: line.inner.as_deref_mut().unwrap(),
+            inner: unsafe { line.inner.assume_init_mut().as_mut() },
             flag: &line.flag,
             _phantom: PhantomData,
         })
@@ -229,7 +229,7 @@ struct CacheLine {
     flag: Flag,
     lru: UnsafeCell<usize>,
     type_id: usize,
-    inner: Option<Box<dyn Cacheable>>,
+    inner: MaybeUninit<Box<dyn Cacheable>>,
 }
 
 impl Default for CacheLine {
@@ -238,7 +238,7 @@ impl Default for CacheLine {
             flag: Flag::default(),
             lru: UnsafeCell::new(0),
             type_id: 0,
-            inner: None,
+            inner: MaybeUninit::uninit(),
         }
     }
 }
@@ -262,14 +262,28 @@ struct Flag {
 }
 
 impl Flag {
-    fn write(&self) -> CacheResult<()> {
+    /// Mark the flag as writing.
+    fn set_write(&self) -> CacheResult<()> {
         self.inner
             .compare_exchange(0, 1, Ordering::Relaxed, Ordering::Relaxed)
             .map_err(|_| CacheError::Locked)?;
         Ok(())
     }
 
-    fn read(&self) -> CacheResult<()> {
+    /// Mark the flag as reading.
+    /// # Safety
+    /// Only one thread can modify the flag at the same time.
+    unsafe fn set_read_locked(&self) -> CacheResult<()> {
+        if self.inner.load(Ordering::Relaxed) & 1 == 1 {
+            return Err(CacheError::Locked);
+        }
+        self.inner.fetch_add(2, Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// Mark the flag as reading.
+    #[allow(unused)]
+    fn set_read(&self) -> CacheResult<()> {
         loop {
             let flag = self.inner.load(Ordering::Relaxed);
             if flag & 1 == 1 {

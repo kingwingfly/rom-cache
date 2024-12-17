@@ -9,6 +9,12 @@ Note: In this file, do not use the hard wrap in the middle of a sentence for com
 -->
 
 ## [Unreleased]
+## [0.0.15] - 2024-12-17
+
+- Updated `CacheLine` to use `MaybeUninit` instead of `Option` for better performance.
+- Replaced `write` and `read` flag methods with `set_write` and `set_read_locked` to improve safety and clarity.
+- Updated documentation comments for improved code maintainability.
+
 ## [0.0.14] - 2024-12-12
 
 - better error message for `CacheError::Busy`
