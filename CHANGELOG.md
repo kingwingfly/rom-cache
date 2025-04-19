@@ -9,6 +9,11 @@ Note: In this file, do not use the hard wrap in the middle of a sentence for com
 -->
 
 ## [Unreleased]
+## [0.1.0] - 2025-04-19
+
+- `trait_upcasting` is stable now.
+- MSRV: 1.86
+
 ## [0.0.15] - 2024-12-17
 
 - Updated `CacheLine` to use `MaybeUninit` instead of `Option` for better performance.

@@ -340,10 +340,7 @@ impl<T: Any> Deref for CacheRef<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        #[cfg(feature = "nightly")]
         let dyn_any: &dyn Any = self.inner;
-        #[cfg(not(feature = "nightly"))]
-        let dyn_any = self.inner.as_any();
         dyn_any.downcast_ref::<T>().expect("downcast failed")
     }
 }
@@ -371,10 +368,7 @@ impl<T: Any> Deref for CacheMut<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        #[cfg(feature = "nightly")]
         let dyn_any: &dyn Any = self.inner;
-        #[cfg(not(feature = "nightly"))]
-        let dyn_any = self.inner.as_any();
         dyn_any.downcast_ref::<T>().expect("downcast failed")
     }
 }
@@ -382,10 +376,7 @@ impl<T: Any> Deref for CacheMut<'_, T> {
 impl<T: Any> DerefMut for CacheMut<'_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.flag.set_dirty();
-        #[cfg(feature = "nightly")]
         let dyn_any: &mut dyn Any = self.inner;
-        #[cfg(not(feature = "nightly"))]
-        let dyn_any = self.inner.as_any_mut();
         dyn_any.downcast_mut::<T>().expect("downcast failed")
     }
 }
@@ -404,25 +395,6 @@ pub trait Cacheable: Any + Send + Sync {
         Self: Sized;
     /// Write Cacheable back to storage.
     fn store(&self) -> std::io::Result<()>;
-
-    /// As Any. This is needed since `Cacheable` will be used as `&dyn Cacheable`,
-    /// and cannot upcast to `&dyn Any` in stable Rust. Just coding as following is Ok.
-    /// ```ignore
-    /// fn as_any(&self) -> &dyn Any {
-    ///     self
-    /// }
-    /// ```
-    /// Or you can simply enable `nightly` future, this needs nightly Rust.
-    #[cfg(not(feature = "nightly"))]
-    fn as_any(&self) -> &dyn Any;
-    /// As Any mut.
-    /// ```ignore
-    /// fn as_any_mut(&mut self) -> &mut dyn Any {
-    ///     self
-    /// }
-    /// ```
-    #[cfg(not(feature = "nightly"))]
-    fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
 trait CacheableExt: Cacheable + Sized {

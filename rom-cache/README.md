@@ -137,7 +137,7 @@ _For more examples, please refer to the [Tests](https://github.com/kingwingfly/r
 <!-- CHANGELOG -->
 ## Changelog
 
-todo
+0.1.0: MSRV 1.86
 
 [more detailed changelog](https://github.com/kingwingfly/rom-cache/blob/dev/CHANGELOG.md)
 
