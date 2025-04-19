@@ -7,11 +7,11 @@ export TERM=xterm-256color
 statements=(
     "cargo clippy --no-default-features -- -D warnings"
 
-    "cargo +nightly run --example example --no-default-features --features nightly"
+    "cargo +nightly run --example example --no-default-features"
 
-    "cargo +nightly test --no-default-features --features nightly"
+    "cargo +nightly test --no-default-features"
 
-    "cargo +nightly miri test --no-default-features --features nightly -- --nocapture"
+    "cargo +nightly miri test --no-default-features -- --nocapture"
 
     ".github/scripts/concurrent_test.sh"
 

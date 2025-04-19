@@ -10,8 +10,6 @@ rom_cache = { path = "../rom-cache" }
 [[example]]
 name = "example"
 path = "example.rs"
-required-features = ["nightly"]
 
 [features]
 default = []
-nightly = ["rom_cache/nightly"]

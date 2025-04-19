@@ -16,8 +16,6 @@ loom = { workspace = true }
 [[test]]
 name = "loom_test"
 path = "loom_test.rs"
-required-features = ["nightly"]
 
 [features]
 default = []
-nightly = ["rom_cache/nightly"]
