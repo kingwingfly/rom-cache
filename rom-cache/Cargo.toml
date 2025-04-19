@@ -25,4 +25,3 @@ loom = { workspace = true }
 
 [features]
 default = []
-nightly = []

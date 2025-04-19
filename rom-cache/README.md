@@ -61,7 +61,7 @@
 ## Import
 ```toml
 [dependencies]
-rom_cache = { version = "0.0.16" }
+rom_cache = { version = "0.1.1" }
 ```
 
 <!-- ABOUT THE PROJECT -->
@@ -88,14 +88,6 @@ Trait `Cacheable` is provided to enable user define how to `load` and `store` da
 - cache locked: `CacheError::Locked`, cannot write `T` while reading or writing.
 
 Any **dirty** `CacheLine` will be written back (`Cacheable::store()`) to Secondary Storage when evicted or `Cache` dropped.
-
-### Features
-
-- `nightly`: enable `#![feature(trait_upcasting)]` to simplify the `Cacheable` trait. (Nightly Rust is needed)
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-
 
 ### Built With
 

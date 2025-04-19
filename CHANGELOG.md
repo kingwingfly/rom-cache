@@ -9,6 +9,10 @@ Note: In this file, do not use the hard wrap in the middle of a sentence for com
 -->
 
 ## [Unreleased]
+## [0.1.1] - 2025-04-19
+
+- doc
+
 ## [0.1.0] - 2025-04-19
 
 - `trait_upcasting` is stable now.
